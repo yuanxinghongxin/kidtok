@@ -1,0 +1,2021 @@
+:root {
+  color-scheme: dark;
+  --tab-h: 56px;
+  --red: #fe2c55;
+  --rail-w: 76px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 全站图标都是内联 SVG：统一按 1em 缩放，跟随所在控件的 font-size。
+   注意不要在这里设 fill，否则会覆盖描边图标（fill="none"）的写法 */
+.ico {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: none;
+  vertical-align: -0.12em;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  /* 手机端禁止浏览器自己的「下拉刷新」，交给页面内的手势处理 */
+  overscroll-behavior-y: none;
+}
+
+body {
+  overflow: hidden;
+}
+
+.page {
+  position: fixed;
+  inset: 0;
+}
+
+.page[hidden] {
+  display: none;
+}
+
+/* ============ 顶部导航 ============ */
+
+.nav {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(10px + env(safe-area-inset-top)) 52px 14px;
+  /* 纯透明导航条：只在顶部铺一层黑色渐变让白色文字可读，没有任何边框/底色块 */
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.62) 0%,
+    rgba(0, 0, 0, 0.32) 55%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  border: 0;
+  border-bottom: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 26px;
+  pointer-events: auto;
+}
+
+.nav-tab {
+  position: relative;
+  padding: 4px 2px 6px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 16px;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.nav-tab.active {
+  color: #fff;
+}
+
+/* 推荐下方的小红线 */
+.nav-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 18px;
+  height: 2px;
+  margin-left: -9px;
+  border-radius: 2px;
+  background: var(--red);
+}
+
+.nav-search {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-top: calc(env(safe-area-inset-top) / 2);
+  padding: 6px;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  background: none;
+  border: 0;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* 合集连播模式下左上角的返回按钮 */
+.back-btn {
+  position: absolute;
+  left: 12px;
+  top: calc(12px + env(safe-area-inset-top));
+  z-index: 22;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.back-btn[hidden] {
+  display: none;
+}
+
+/* ============ 下拉刷新 ============ */
+
+/* 提示层：跟随下拉距离从顶部滑出，松手超过阈值转圈刷新 */
+.pull-refresh {
+  position: absolute;
+  top: calc(56px + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-40px);
+  transition: opacity 0.2s ease, transform 0.24s cubic-bezier(0.22, 0.9, 0.35, 1);
+}
+
+.pull-refresh.show {
+  opacity: 1;
+}
+
+/* 转圈：拉动时按距离轻微旋转，到阈值变红，刷新时匀速自转 */
+.pull-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-top-color: #fff;
+  transform: rotate(var(--rot, 0deg));
+}
+
+.pull-refresh.ready .pull-spinner {
+  border-top-color: var(--red);
+}
+
+.pull-refresh.loading .pull-spinner {
+  animation: pullSpin 0.8s linear infinite;
+  border-top-color: var(--red);
+}
+
+@keyframes pullSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* PC 端右上角小圆刷新按钮（只在鼠标/触控板设备显示） */
+.nav-refresh {
+  position: absolute;
+  right: 16px;
+  top: calc(56px + env(safe-area-inset-top));
+  z-index: 21;
+  display: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .nav-refresh {
+    display: grid;
+  }
+}
+
+.nav-refresh.spinning .ico {
+  animation: pullSpin 0.8s linear infinite;
+}
+
+/* ============ 视频层 ============ */
+
+/* 视频铺满整个视口（沉浸式），底部导航改为悬浮透明层 */
+.feed {
+  height: 100%;
+  height: 100dvh;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+}
+
+.feed::-webkit-scrollbar {
+  display: none;
+}
+
+/* 每个视频卡片 = 一整屏舞台：坐标原点永远是屏幕左上角，
+   和视频画面的实际宽高（object-fit: contain 后的画面）完全无关 */
+.slide {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  /* 跑马灯等内容会产生横向溢出，clip 可禁止「聚焦/scrollIntoView」把整屏横向滚走 */
+  overflow: clip;
+  background: #000;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+/* 底层模糊背景：同一张封面铺满并放大，避免模糊后四周透出黑边 */
+.bg-blur {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.12);
+  filter: blur(20px) brightness(0.5);
+}
+
+/* ---- 视频画面层（z-index: 1）：只负责画面，绝不参与 UI 定位 ---- */
+.cover,
+.player {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: 0; /* 防止 iOS 给视频层画聚焦描边（起播瞬间会闪一圈白线） */
+  object-fit: contain; /* 横屏片源完整居中显示，上下留黑边 */
+  z-index: 1;
+}
+
+.cover {
+  transition: opacity 0.3s ease;
+}
+
+/* 封面在「首帧真的画出来」（playing/painted）之后才淡出。
+   不用 loadeddata：MSE(TS) 那时可能还在解码，会露出一两秒黑屏 */
+.slide.painted .cover {
+  opacity: 0;
+}
+
+/* 视频和封面同层，靠 DOM 顺序叠在封面上；画面透明区域让底层模糊背景透出来 */
+.player {
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 加载/错误提示 */
+.hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 12;
+  padding: 7px 14px;
+  font-size: 13px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  display: none;
+}
+
+.hint.show {
+  display: block;
+}
+
+/* ============ 暂停/播放居中图标 ============ */
+
+/* 圆形毛玻璃按钮：只在「暂停」时出现，正常播放时彻底隐藏（visibility 同时收掉） */
+.pause-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 11;
+  width: 76px;
+  height: 76px;
+  padding: 21px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none; /* 不抢占点击：点在图标上等于点在视频上 */
+  opacity: 0;
+  visibility: hidden;
+  /* 播放中：图标稍大一点并淡出，恢复播放时呈现「放大 + 淡出」 */
+  transform: translate(-50%, -50%) scale(1.35);
+  transition:
+    opacity 0.16s ease-out,
+    transform 0.22s cubic-bezier(0.22, 0.9, 0.35, 1),
+    visibility 0.16s linear;
+  will-change: opacity, transform;
+}
+
+.pause-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: rgba(255, 255, 255, 0.9);
+  filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.45));
+}
+
+/* 暂停：从稍大缩回原尺寸并淡入 */
+.slide.paused .pause-icon {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* 覆盖层：右侧互动栏 + 左下信息区 */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* ============ 右侧互动栏 ============ */
+
+/* 相对 .slide（整屏舞台）定位，不跟随视频画面宽度 */
+.rail {
+  position: absolute;
+  right: 10px;
+  bottom: 120px;
+  z-index: 10;
+  width: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  /* 整条互动栏自己接管点击，避免点空白处冒泡到视频上触发暂停 */
+  pointer-events: auto;
+}
+
+.avatar-wrap {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  margin-bottom: 2px;
+  padding: 0;
+  background: none;
+  border: 0;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* 白边圆形头像（没有真实图片，用渐变 + 首字占位） */
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  font-size: 17px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff7a9c, #7a2bff);
+}
+
+/* 头像下方红色圆底 + 白色十字，紧贴头像 */
+.avatar-plus {
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--red);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.act {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  color: #fff;
+  background: none;
+  border: 0;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.act-icon {
+  display: grid;
+  place-items: center;
+  font-size: 32px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+  transition: transform 0.15s ease;
+}
+
+.act-count {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.act.is-liked .ico {
+  color: var(--red);
+}
+
+.act.bump .act-icon {
+  animation: actBump 0.3s ease;
+}
+
+@keyframes actBump {
+  50% {
+    transform: scale(1.35);
+  }
+}
+
+/* 黑胶唱片：黑底圆盘 + 中心头像，播放时旋转 */
+.vinyl {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: #111;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.vinyl-disc {
+  width: 100%;
+  height: 100%;
+  padding: 13px;
+  border-radius: 50%;
+  background: repeating-radial-gradient(circle, #1e1e1e 0 2px, #0d0d0d 2px 4px);
+  animation: spin 6s linear infinite;
+  animation-play-state: paused;
+}
+
+/* 唱片中心的小头像 */
+.vinyl-center {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background: linear-gradient(135deg, #ff7a9c, #7a2bff);
+}
+
+.slide[data-active="1"] .vinyl-disc {
+  animation-play-state: running;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============ 左下信息区 ============ */
+
+/* 同样相对整屏定位，固定在屏幕左下角 */
+/* bottom 要从「底栏 + 安全区 + 进度条那一条」往上算：
+   独立模式下 env(safe-area-inset-bottom) 有 34px，底栏会变高，
+   写死 80px 会让文字区压到进度条上（还会吃掉进度条的触摸） */
+.info {
+  position: absolute;
+  left: 15px;
+  bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 30px);
+  width: 70%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  /* 整块不接点击（穿透到视频），只有可点的子元素自己打开：
+     否则这块会盖住贴底的进度条，导致拖不动 */
+  pointer-events: none;
+}
+
+/* 合集胶囊标签 */
+.collection-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 5px 11px 5px 8px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  background: rgba(255, 255, 255, 0.2);
+  border: 0;
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.collection-tag .ico {
+  font-size: 14px;
+}
+
+.collection-tag-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.author {
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.caption {
+  margin: 0;
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-line; /* 文案里的 \n 直接换行 */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 音乐信息 + 跑马灯 */
+.music {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 13px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.music .ico {
+  flex: none;
+  font-size: 15px;
+}
+
+.marquee {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 跑马灯：文本从右侧滑入、向左滚动，只在当前屏播放时运行 */
+.marquee-inner {
+  display: inline-block;
+  padding-left: 100%;
+  white-space: nowrap;
+  animation: marquee 12s linear infinite;
+  animation-play-state: paused;
+}
+
+.marquee-inner span {
+  display: inline-block;
+}
+
+.slide[data-active="1"] .marquee-inner {
+  animation-play-state: running;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+/* ============ 极细进度条 ============ */
+
+/* 贴底整条 26px 的区域都能按（视觉上仍是一条细线，手指不用瞄准 3px） */
+.scrub {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tab-h) + env(safe-area-inset-bottom));
+  z-index: 6;
+  height: 26px;
+  display: flex;
+  align-items: flex-end;
+  pointer-events: auto;
+  /* 整条区域自己吃掉手势，不然手指稍微一斜就被当成上下滑屏 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.scrub.hide {
+  display: none;
+}
+
+.scrub-track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 2px;
+  transition: height 0.15s ease, margin-bottom 0.15s ease;
+}
+
+/* 拖动时轨道稍微变粗，手感更「实」 */
+.scrub.dragging .scrub-track {
+  height: 5px;
+  margin-bottom: 3px;
+}
+
+.scrub-fill {
+  position: relative;
+  width: 0;
+  height: 100%;
+  background: #fff;
+  border-radius: 2px;
+}
+
+/* 拖动时才出现的圆点，始终落在进度末端 */
+.scrub-thumb {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px -6.5px 0 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.24), 0 2px 6px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.scrub.dragging .scrub-thumb {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 拖动时跟随手指的时间气泡（当前 / 总时长），和抖音一样贴在轨道上方 */
+.scrub-bubble {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  padding: 5px 10px;
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.scrub.dragging .scrub-bubble {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ============ 静音按钮 ============ */
+
+/* 固定在左侧、顶部导航下方（不放在视频内部）；safe-area 让刘海屏/状态栏下也不被遮挡。
+   注意不能放在导航那一行里：会和「关注/推荐」挤在一起，看着像第三个导航项 */
+.mute-btn {
+  position: absolute;
+  left: calc(15px + env(safe-area-inset-left));
+  top: calc(68px + env(safe-area-inset-top));
+  z-index: 15;
+  /* 用 flex 居中而不是 grid：grid 的隐式轨会撑满内容盒，手机端字号被系统放大时
+     图标的 1em 尺寸会漂，看上去就偏出圆心 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 15px;
+  border: 0;
+  border-radius: 50%;
+  /* 半透明黑底：小圆点，不抢画面 */
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+/* 图标尺寸固定成 px：不跟 font-size 走，避免手机系统调大字号后图标被撑大、偏出圆心 */
+.mute-btn .ico {
+  width: 18px;
+  height: 18px;
+  vertical-align: 0;
+}
+
+.mute-btn:active {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* ============ 双击点赞动画层 ============ */
+
+.heart-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.heart-pop {
+  position: absolute;
+  font-size: 92px;
+  line-height: 1;
+  color: var(--red);
+  transform: translate(-50%, -50%) scale(0.2);
+  animation: heartPop 0.9s ease-out forwards;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
+}
+
+@keyframes heartPop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.2);
+    opacity: 0;
+  }
+  25% {
+    transform: translate(-50%, -50%) scale(1.15);
+    opacity: 1;
+  }
+  45% {
+    transform: translate(-50%, -50%) scale(0.95);
+  }
+  60% {
+    transform: translate(-50%, -50%) scale(1.05);
+  }
+  100% {
+    transform: translate(-50%, -110%) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ============ 空状态 ============ */
+
+.empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: #aaa;
+  font-size: 14px;
+}
+
+/* 冷启动占位：feed 还没回来时，用上次播放那一屏的封面铺满整屏，
+   避免刷新页面后先看到一段时间黑屏 + 「加载中…」 */
+.boot-preview {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #000;
+}
+
+.nav-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #000;
+  color: #9a9aa2;
+  font-size: 14px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.nav-empty[hidden] {
+  display: none;
+}
+
+.nav-empty .ico {
+  font-size: 34px;
+}
+
+.nav-empty p {
+  margin: 0;
+}
+
+/* ============ 合集面板 ============ */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.sheet[hidden] {
+  display: none;
+}
+
+.sheet-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+
+.sheet-mask {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* 深色毛玻璃面板：底下的视频画面会隐约透出来 */
+.playlist-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 62%;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 18, 18, 0.85);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  border-radius: 20px 20px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  transform: translateY(100%);
+  transition: transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1);
+  overflow: hidden;
+}
+
+.sheet.open .sheet-mask {
+  opacity: 1;
+}
+
+.sheet.open .playlist-panel {
+  transform: translateY(0);
+}
+
+/* 顶部小横条：提示可下拉关闭 */
+.sheet-handle {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.playlist-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px 12px 18px;
+}
+
+.playlist-title {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* 目录面板里长路径要能省略，不能把关闭按钮挤走 */
+.playlist-head-text {
+  min-width: 0;
+}
+
+.playlist-head-text .playlist-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playlist-sub {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #8b8b93;
+}
+
+.playlist-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #fff;
+  font-size: 19px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.12);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.playlist-close:active {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* 列表容器：纵向滚动 */
+.playlist-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 10px 18px;
+}
+
+.playlist-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* 分季合集：列表里每一季前面的小标题 */
+.episode-season {
+  flex: none;
+  padding: 10px 10px 2px;
+  color: #9a9aa2;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* 单张卡片：左缩略图 / 中间两行文字 / 右侧播放图标 */
+.episode-item {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px;
+  color: #fff;
+  font-family: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.episode-item:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* 当前正在播放的这一集：淡淡的灰色高亮 */
+.episode-item.current {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.episode-thumb {
+  flex: none;
+  display: block;
+  width: 80px;
+  height: 50px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #2a2a2e;
+}
+
+.episode-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.episode-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f2f2f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.episode-item.current .episode-title {
+  color: var(--red);
+}
+
+.episode-desc {
+  font-size: 12px;
+  color: #8b8b93;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.episode-play {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.pl-play {
+  display: grid;
+  place-items: center;
+}
+
+.episode-item.current .episode-play {
+  color: var(--red);
+}
+
+/* 「正在播放」四条竖线动画 */
+.playing-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 15px;
+}
+
+.playing-bars i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--red);
+  transform-origin: bottom;
+  animation: playingBars 0.9s ease-in-out infinite;
+}
+
+.playing-bars i:nth-child(2) {
+  animation-delay: 0.18s;
+  animation-duration: 1.05s;
+}
+
+.playing-bars i:nth-child(3) {
+  animation-delay: 0.36s;
+  animation-duration: 0.8s;
+}
+
+.playing-bars i:nth-child(4) {
+  animation-delay: 0.52s;
+  animation-duration: 1s;
+}
+
+@keyframes playingBars {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* ============ 底部两栏 ============ */
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  height: calc(var(--tab-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  /* PWA 全屏下也是绝对定位悬浮：纯透明底 + 自下而上的黑色渐变，
+     不加毛玻璃/遮罩/边框，避免出现一条生硬的分界线 */
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.72) 0%,
+    rgba(0, 0, 0, 0.42) 45%,
+    rgba(0, 0, 0, 0.14) 75%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  border: 0;
+  border-top: 0;
+  box-shadow: none;
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  background: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  cursor: pointer;
+}
+
+.tab .ico {
+  width: 22px;
+  height: 22px;
+  transition: color 0.18s ease, filter 0.18s ease;
+}
+
+/* 当前所在页：图标与文字变纯白（和抖音底部栏一致），未选中为半透明白 */
+.tab.active {
+  color: #fff;
+}
+
+.tab.active .ico {
+  color: #fff;
+  filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.6));
+}
+
+/* ============ 我的 ============ */
+
+.me {
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #0b0b0d;
+  color: #fff;
+  /* 给悬浮 tabbar 留出空间，滚动到底也不会被压住 */
+  padding-bottom: calc(var(--tab-h) + 20px + env(safe-area-inset-bottom));
+}
+
+/* ---------- 顶部个人信息卡片 ---------- */
+
+.me-hero {
+  position: relative;
+  overflow: hidden;
+  padding: calc(52px + env(safe-area-inset-top)) 18px 20px;
+  /* 深灰渐变兜底：封面缺失时也不会是一片纯黑 */
+  background: linear-gradient(160deg, #2a2a31 0%, #17171c 45%, #0b0b0d 100%);
+}
+
+/* 第一支视频的封面，极度模糊 + 压暗，只做氛围背景 */
+.me-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.25);
+  filter: blur(38px) brightness(0.42) saturate(0.9);
+}
+
+/* 从下往上的黑色渐变遮罩，保证头像与数字清晰可读 */
+.me-hero-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    #0b0b0d 0%,
+    rgba(11, 11, 13, 0.82) 32%,
+    rgba(11, 11, 13, 0.35) 62%,
+    rgba(11, 11, 13, 0.15) 100%
+  );
+}
+
+.me-hero-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 带白色边框的圆头像 */
+.me-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #ff7a9c, #7a2bff);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+}
+
+.me-id {
+  min-width: 0;
+}
+
+.me-name {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.me-sub {
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 获赞 / 关注 / 粉丝：三列等宽，数字居中加粗 */
+.me-counts {
+  position: relative;
+  display: flex;
+  margin-top: 18px;
+}
+
+.me-count {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.me-count b {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.me-count span {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ---------- 真实数据卡片 ---------- */
+
+.me-stat-row {
+  display: flex;
+  gap: 12px;
+  padding: 16px 18px 4px;
+}
+
+.me-stat-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  background: #15151a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+}
+
+.me-stat-card b {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.me-stat-card span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 「收录合集」是按钮：点开后进「全部合集」页 */
+.me-stat-card.link {
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.me-stat-card.link:active {
+  background: #1d1d24;
+}
+
+/* ---------- 我的 · 全部合集 ---------- */
+
+.collection-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+.collection-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  color: #fff;
+  font-family: inherit;
+  text-align: left;
+  background: #15151a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.collection-card:active {
+  background: #1d1d24;
+}
+
+.collection-card-cover {
+  flex: none;
+  display: block;
+  width: 96px;
+  height: 56px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #2a2a2e;
+}
+
+.collection-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.collection-card-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.collection-card-sub {
+  font-size: 12px;
+  color: #8b8b93;
+}
+
+.collection-card-arrow {
+  flex: none;
+  color: #b9b9c1;
+  font-size: 20px;
+}
+
+.collection-empty {
+  padding: 40px 0;
+  color: #8b8b93;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- 作品 / 私密 ---------- */
+
+.me-tabs {
+  display: flex;
+  gap: 26px;
+  margin: 20px 18px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.me-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 2px 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.me-tab.active {
+  color: #fff;
+}
+
+.me-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 18px;
+  height: 2px;
+  margin-left: -9px;
+  border-radius: 2px;
+  background: var(--red);
+}
+
+.me-tab b {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ---------- 设置列表 ---------- */
+
+.me-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px 0;
+}
+
+.me-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  color: #fff;
+  font-family: inherit;
+  text-align: left;
+  background: #15151a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.me-row:active {
+  background: #1d1d24;
+}
+
+.me-row-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  font-size: 19px;
+  color: #ff7a9c;
+  background: rgba(254, 44, 85, 0.14);
+}
+
+.me-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.me-row-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.me-row-sub {
+  overflow: hidden;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.me-row-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+}
+
+/* 设置页里的开关（是否默认静音）：整行都可点，开关只负责显示状态 */
+.switch {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  transition: background 0.18s ease;
+}
+
+.switch-knob {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.18s cubic-bezier(0.22, 0.9, 0.35, 1);
+}
+
+.switch.on {
+  background: var(--red);
+}
+
+.switch.on .switch-knob {
+  transform: translateX(20px);
+}
+
+/* 分组标题（常规 / 高级设置） */
+.settings-group-title {
+  padding: 22px 20px 8px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* 预加载数量：减 / 数值 / 加。整行不可点，只有两个按钮响应 */
+.stepper {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+
+.stepper-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.1);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.stepper-btn:disabled {
+  color: rgba(255, 255, 255, 0.28);
+  background: transparent;
+  cursor: default;
+}
+
+.stepper-value {
+  min-width: 22px;
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* ============ 服务器配置（全屏表单） ============ */
+
+
+.config {
+  z-index: 40;
+  overflow-y: auto;
+  background: #0b0b0d;
+  color: #fff;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+.cfg-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 10px;
+  background: rgba(11, 11, 13, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(14px);
+}
+
+.cfg-back {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.cfg-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.cfg-form {
+  padding: 18px 18px 0;
+}
+
+/* 一组字段装在同一张卡片里，行间用 1px 分隔，接近网盘 App 的观感 */
+.cfg-group {
+  overflow: hidden;
+  background: #15151a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+}
+
+.cfg-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cfg-field:last-child {
+  border-bottom: 0;
+}
+
+.cfg-label {
+  flex: none;
+  width: 62px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.cfg-control {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.cfg-input,
+.cfg-select {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 15px 0;
+  color: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  background: none;
+  border: 0;
+  outline: none;
+}
+
+.cfg-input::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.cfg-select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.cfg-select option {
+  background: #15151a;
+  color: #fff;
+}
+
+.cfg-chevron {
+  position: absolute;
+  right: -2px;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+
+/* 密码右侧的小眼睛 */
+.cfg-eye {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 18px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.cfg-error {
+  margin: 12px 4px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ff6b81;
+}
+
+/* 底部黑色大按钮 */
+.cfg-save {
+  display: block;
+  width: 100%;
+  margin: 24px 0 0;
+  padding: 15px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.cfg-save:active {
+  background: #111;
+}
+
+.cfg-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* 保存成功提示 */
+.toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 60;
+  transform: translate(-50%, -50%);
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+/* ============ 「我的」右上角设置齿轮 ============ */
+
+.me-gear {
+  position: absolute;
+  top: calc(12px + env(safe-area-inset-top));
+  right: 16px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.me-gear:active {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* ============ 我的收藏：两列封面占位网格 ============ */
+
+.me-gallery {
+  padding: 18px 18px 0;
+}
+
+.me-gallery-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.me-gallery-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.me-gallery-count {
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 12px;
+}
+
+.me-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* 占位封面：深色渐变块 + 中心播放按钮（没有真实数据时铺满两列） */
+.me-tile {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background: linear-gradient(150deg, #2c2c35 0%, #15151a 100%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+}
+
+.me-grid .me-tile:nth-child(3n + 2) {
+  background: linear-gradient(150deg, #30313b 0%, #191a20 100%);
+}
+
+.me-grid .me-tile:nth-child(3n + 3) {
+  background: linear-gradient(150deg, #2a2b33 0%, #141418 100%);
+}
+
+.me-tile::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  background: rgba(0, 0, 0, 0.36);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.me-tile::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin: -7px 0 0 -5px;
+  border-left: 12px solid rgba(255, 255, 255, 0.92);
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+}
+
+/* ============ 设置抽屉：从右侧滑出 ============ */
+
+.drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+
+.drawer[hidden] {
+  display: none;
+}
+
+/* 遮罩：淡入淡出，点击它关闭抽屉 */
+.drawer-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition: opacity 0.26s ease;
+}
+
+/* 面板默认停在屏幕外，加 .show 后滑入；300ms 后抽屉完全就位 */
+.drawer-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(86vw, 360px);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: rgba(18, 18, 22, 0.9);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(26px) saturate(150%);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.22, 0.9, 0.35, 1);
+}
+
+.drawer.show .drawer-mask {
+  opacity: 1;
+}
+
+.drawer.show .drawer-panel {
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-mask,
+  .drawer-panel {
+    transition: none;
+  }
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+
+.drawer-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.drawer-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.1);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 24px;
+  overscroll-behavior: contain;
+}
+
+/* 抽屉里的分组/卡片：半透明底，透出毛玻璃背景 */
+.drawer .settings-group-title {
+  padding: 18px 18px 8px;
+}
+
+.drawer .me-list {
+  gap: 8px;
+  padding: 0 14px;
+}
+
+.drawer .me-row {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.07);
+}
+
+.drawer .me-row:active {
+  background: rgba(255, 255, 255, 0.12);
+}

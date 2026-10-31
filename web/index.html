@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>启蒙短视频</title>
+  <meta name="description" content="启蒙短视频 · 抖音式全屏沉浸 Feed">
+  <!-- PWA：通过手机浏览器「添加到主屏幕」安装为独立应用，启动时无地址栏/工具栏 -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
+  <!-- iOS Safari：用不透明黑色状态栏。页面本身全黑，视觉上依旧是无边沉浸；
+       black-translucent 在部分系统版本上会让 webview 高度少算状态栏那一截，
+       整页顶到屏幕上沿、底部多出一条黑边（首页/我的 贴不到底） -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="启蒙短视频">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <!-- 全部图标使用内联 SVG，不依赖任何外部字体图标库 -->
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main id="page-home" class="page">
+    <!-- 顶部：居中双 Tab + 右上角搜索 -->
+    <header class="nav">
+      <div class="nav-tabs">
+        <button class="nav-tab" type="button" data-nav="follow">关注</button>
+        <button class="nav-tab active" type="button" data-nav="recommend">推荐</button>
+      </div>
+      <button id="search-btn" class="nav-search" type="button" aria-label="搜索">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+      </button>
+    </header>
+
+    <!-- PC 端刷新推荐流（手机端用下拉手势） -->
+    <button id="refresh-btn" class="nav-refresh" type="button" aria-label="刷新推荐">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.7-6"/><path d="M20 4.6V11h-6.4"/></svg>
+    </button>
+
+    <!-- 下拉刷新提示：随下拉距离下移，松手超过阈值后转圈刷新 -->
+    <div id="pull-refresh" class="pull-refresh" aria-hidden="true">
+      <span class="pull-spinner"></span>
+      <span id="pull-text" class="pull-text">下拉刷新</span>
+    </div>
+
+    <!-- 合集连播模式下左上角的返回按钮 -->
+    <button id="back-to-feed" class="back-btn" type="button" aria-label="返回推荐" hidden>
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4.8 7.3 12l7.2 7.2"/></svg>
+    </button>
+
+    <section id="feed" class="feed">
+      <div class="empty">加载中…</div>
+    </section>
+
+    <div id="nav-empty" class="nav-empty" hidden>
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.8"/><path d="M4.8 20c.7-3.7 3.7-5.6 7.2-5.6s6.5 1.9 7.2 5.6"/></svg>
+      <p>还没有关注的人<br>去「推荐」看看吧</p>
+    </div>
+
+    <!-- 静音开关（屏幕左上角）；默认静音可在「设置」里改，默认是不静音 -->
+    <button id="mute-btn" class="mute-btn" type="button" aria-label="静音切换">
+      <svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 9.1h3.2L9.7 5.8v12.4L5.7 15H2.5z"/><path d="M13.38 9.3a3.6 3.6 0 0 1 0 5.4M17.84 6.7a6.4 6.4 0 0 1 0 10.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    </button>
+
+    <!-- 双击点赞动画层 -->
+    <div id="heart-layer" class="heart-layer"></div>
+  </main>
+
+  <!-- 我的 -->
+  <main id="page-me" class="page me" hidden>
+    <!-- 个人信息卡片：糊化封面 + 黑色渐变遮罩 -->
+    <header class="me-hero">
+      <img id="me-cover" class="me-cover" alt="" aria-hidden="true">
+      <div class="me-hero-shade"></div>
+
+      <!-- 右上角齿轮：打开设置抽屉 -->
+      <button id="me-settings-btn" class="me-gear" type="button" aria-label="设置">
+        <!-- 齿轮：圆心对称的 8 齿造型，不会左右偏移 -->
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <g fill="currentColor" stroke="none">
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(45 12 12)"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(90 12 12)"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(135 12 12)"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(180 12 12)"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(225 12 12)"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(270 12 12)"/>
+            <rect x="10.5" y="1.5" width="3" height="3.4" rx="0.9" transform="rotate(315 12 12)"/>
+          </g>
+        </svg>
+      </button>
+
+      <div class="me-hero-main">
+        <div class="me-avatar">启</div>
+        <div class="me-id">
+          <div class="me-name">网盘用户</div>
+          <div class="me-sub">@宝宝爱看 · AList 视频源</div>
+        </div>
+      </div>
+
+      <div class="me-counts">
+        <div class="me-count"><b>1.2万</b><span>获赞</span></div>
+        <div class="me-count"><b>86</b><span>关注</span></div>
+        <div class="me-count"><b>120</b><span>粉丝</span></div>
+      </div>
+    </header>
+
+    <!-- 真实数据：视频总数 / 合集数（合集数可点开，直接选一个合集连播） -->
+    <div class="me-stat-row">
+      <div class="me-stat-card">
+        <b id="me-count">-</b>
+        <span>视频总数</span>
+      </div>
+      <button id="me-collections-card" class="me-stat-card link" type="button">
+        <b id="me-collections">-</b>
+        <span>收录合集 ›</span>
+      </button>
+    </div>
+
+    <!-- 作品 / 私密 / 喜欢 -->
+    <div class="me-tabs">
+      <button class="me-tab active" type="button" data-me-tab="works">作品 <b id="me-works">0</b></button>
+      <button class="me-tab" type="button" data-me-tab="private">私密</button>
+      <button class="me-tab" type="button" data-me-tab="likes">喜欢</button>
+    </div>
+
+    <!-- 观看历史 / 我的收藏：暂时没有数据，用两列封面占位图铺满 -->
+    <section class="me-gallery">
+      <div class="me-gallery-head">
+        <h2 class="me-gallery-title">我的收藏</h2>
+        <span class="me-gallery-count">12</span>
+      </div>
+      <div class="me-grid" aria-hidden="true">
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+        <div class="me-tile"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 全部合集：从「我的 · 收录合集」点进来，任选一个合集直接连播 -->
+  <main id="page-collections" class="page config" hidden>
+    <header class="cfg-head">
+      <button id="collections-back" class="cfg-back" type="button" aria-label="返回">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4.8 7.3 12l7.2 7.2"/></svg>
+      </button>
+      <h1 class="cfg-title">全部合集</h1>
+    </header>
+    <div id="collections-list" class="collection-cards"></div>
+  </main>
+
+  <!-- 设置抽屉：点「我的」右上角齿轮，从右侧滑出（半屏宽 + 毛玻璃） -->
+  <div id="settings-drawer" class="drawer" hidden>
+    <div class="drawer-mask" data-drawer-close></div>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="设置">
+      <header class="drawer-head">
+        <h2 class="drawer-title">设置</h2>
+        <button id="drawer-close" class="drawer-close" type="button" aria-label="关闭">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8"/></svg>
+        </button>
+      </header>
+
+      <div class="drawer-body">
+        <div class="settings-group-title">常规</div>
+        <section class="me-list">
+          <button id="server-btn" class="me-row" type="button">
+            <span class="me-row-icon"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3.6" y="4.6" width="16.8" height="6" rx="1.8"/><rect x="3.6" y="13.4" width="16.8" height="6" rx="1.8"/><path d="M7 7.6h.01M7 16.4h.01"/></svg></span>
+            <span class="me-row-text">
+              <span class="me-row-title">服务器配置</span>
+              <span id="server-sub" class="me-row-sub">未配置</span>
+            </span>
+            <span class="me-row-action">管理<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.6 5.6 6.4 6.4-6.4 6.4"/></svg></span>
+          </button>
+
+          <!-- 是否默认静音：关（默认）＝一打开就有声音；开＝每次打开先静音 -->
+          <button id="default-mute-row" class="me-row" type="button" aria-pressed="false">
+            <span class="me-row-icon"><svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 9.1h3.2L9.7 5.8v12.4L5.7 15H2.5z"/><path d="M13.38 9.3a3.6 3.6 0 0 1 0 5.4M17.84 6.7a6.4 6.4 0 0 1 0 10.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+            <span class="me-row-text">
+              <span class="me-row-title">是否默认静音</span>
+              <span id="default-mute-sub" class="me-row-sub">关：打开即有声</span>
+            </span>
+            <span id="default-mute-switch" class="switch" aria-hidden="true"><span class="switch-knob"></span></span>
+          </button>
+        </section>
+
+        <div class="settings-group-title">高级设置</div>
+        <section class="me-list">
+          <!-- 预加载数量：当前屏之后同时准备几屏数据。数值越大切屏越快，越费流量 -->
+          <div class="me-row">
+            <span class="me-row-icon"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3.2 4.6 13.4h5.4l-1 7.4 8.4-10.2h-5.4z"/></svg></span>
+            <span class="me-row-text">
+              <span class="me-row-title">预加载数量</span>
+              <span id="preload-sub" class="me-row-sub">同时预读下面 1 屏</span>
+            </span>
+            <span class="stepper">
+              <button id="preload-minus" class="stepper-btn" type="button" aria-label="减少预加载数量">−</button>
+              <span id="preload-value" class="stepper-value">1</span>
+              <button id="preload-plus" class="stepper-btn" type="button" aria-label="增加预加载数量">＋</button>
+            </span>
+          </div>
+        </section>
+
+        <div class="settings-group-title">其他</div>
+        <section class="me-list">
+          <!-- 清除缓存：只清本地临时数据（封面/直链等），不动服务器配置 -->
+          <button id="clear-cache-btn" class="me-row" type="button">
+            <span class="me-row-icon"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 7.5h15"/><path d="M9.5 7.5V5.4a1.2 1.2 0 0 1 1.2-1.2h2.6a1.2 1.2 0 0 1 1.2 1.2v2.1"/><path d="m6.4 7.5.9 11.1a1.6 1.6 0 0 0 1.6 1.5h6.2a1.6 1.6 0 0 0 1.6-1.5l.9-11.1"/></svg></span>
+            <span class="me-row-text">
+              <span class="me-row-title">清除缓存</span>
+              <span class="me-row-sub">清理封面与临时直链记录</span>
+            </span>
+            <span class="me-row-action">清除</span>
+          </button>
+
+          <!-- 关于应用 -->
+          <button id="about-btn" class="me-row" type="button">
+            <span class="me-row-icon"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v6"/><circle cx="12" cy="7.9" r="0.9" fill="currentColor" stroke="none"/></svg></span>
+            <span class="me-row-text">
+              <span class="me-row-title">关于应用</span>
+              <span class="me-row-sub">启蒙短视频 · 本地网盘聚合</span>
+            </span>
+            <span class="me-row-action">v1.0</span>
+          </button>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 服务器配置：全屏表单 -->
+  <main id="page-config" class="page config" hidden>
+    <header class="cfg-head">
+      <button id="cfg-back" class="cfg-back" type="button" aria-label="返回">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4.8 7.3 12l7.2 7.2"/></svg>
+      </button>
+      <h1 class="cfg-title">服务器配置</h1>
+    </header>
+
+    <form id="cfg-form" class="cfg-form" autocomplete="off">
+      <div class="cfg-group">
+        <label class="cfg-field">
+          <span class="cfg-label">协议</span>
+          <span class="cfg-control">
+            <select id="cfg-protocol" class="cfg-select" name="protocol">
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+            </select>
+            <svg class="ico cfg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg>
+          </span>
+        </label>
+
+        <label class="cfg-field">
+          <span class="cfg-label">地址</span>
+          <span class="cfg-control">
+            <input id="cfg-address" class="cfg-input" name="address" type="text" placeholder="192.168.0.201" spellcheck="false">
+          </span>
+        </label>
+
+        <label class="cfg-field">
+          <span class="cfg-label">端口</span>
+          <span class="cfg-control">
+            <input id="cfg-port" class="cfg-input" name="port" type="text" inputmode="numeric" placeholder="5244">
+          </span>
+        </label>
+
+        <label class="cfg-field">
+          <span class="cfg-label">用户名</span>
+          <span class="cfg-control">
+            <input id="cfg-username" class="cfg-input" name="username" type="text" placeholder="admin" spellcheck="false">
+          </span>
+        </label>
+
+        <label class="cfg-field">
+          <span class="cfg-label">密码</span>
+          <span class="cfg-control">
+            <input id="cfg-password" class="cfg-input" name="password" type="password" placeholder="请输入密码">
+            <button id="cfg-eye" class="cfg-eye" type="button" aria-label="显示密码">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.8 21 20.2"/><path d="M10.6 6.3A9.7 9.7 0 0 1 12 6.2c4.9 0 8.4 3.1 9.6 5.8a12 12 0 0 1-2.7 3.6"/><path d="M6.2 8.1C4.4 9.5 3.2 11 2.4 12c1.2 2.7 4.7 5.8 9.6 5.8 1.5 0 2.9-.3 4.1-.9"/><path d="M10.1 10.2a2.7 2.7 0 0 0 3.8 3.8"/></svg>
+            </button>
+          </span>
+        </label>
+
+        <label class="cfg-field">
+          <span class="cfg-label">视频路径</span>
+          <span class="cfg-control">
+            <input id="cfg-video-path" class="cfg-input" name="video_path" type="text" placeholder="/影视/启蒙" spellcheck="false">
+          </span>
+        </label>
+      </div>
+
+      <p id="cfg-error" class="cfg-error" hidden></p>
+
+      <button id="cfg-save" class="cfg-save" type="submit">保存</button>
+    </form>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- 合集选择面板（半屏，从底部滑出） -->
+  <div id="collection-sheet" class="sheet" hidden>
+    <div class="sheet-mask"></div>
+    <div class="playlist-panel">
+      <div class="sheet-handle"></div>
+      <div class="playlist-head">
+        <div>
+          <div id="sheet-title" class="playlist-title">合集</div>
+          <div id="sheet-sub" class="playlist-sub">共 20 集</div>
+        </div>
+        <button id="sheet-close" class="playlist-close" type="button" aria-label="关闭">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8"/></svg>
+        </button>
+      </div>
+      <div id="sheet-list" class="playlist-list"></div>
+    </div>
+  </div>
+
+  <!-- 底部两栏 -->
+  <nav class="tabbar">
+    <button class="tab active" data-tab="home" type="button">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 10.7 12 3.6l8.4 7.1"/><path d="M5.9 9.5V19a1.2 1.2 0 0 0 1.2 1.2h3.5v-5.4h2.8v5.4h3.5A1.2 1.2 0 0 0 18.1 19V9.5"/></svg>
+      <span>首页</span>
+    </button>
+    <button class="tab" data-tab="me" type="button">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.8"/><path d="M4.9 20c.7-3.7 3.7-5.5 7.1-5.5s6.4 1.8 7.1 5.5"/></svg>
+      <span>我的</span>
+    </button>
+  </nav>
+
+  <script src="/mpegts.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
