@@ -10,8 +10,6 @@ func NewRouter(h *Handler, static http.FileSystem) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", h.Config)
 	mux.HandleFunc("POST /api/config", h.SaveConfig)
-	mux.HandleFunc("GET /api/config/raw", h.RawConfig)
-	mux.HandleFunc("GET /api/sites", h.Sites)
 	mux.HandleFunc("GET /api/alist/list", h.AlistList)
 	mux.HandleFunc("GET /api/alist/play", h.AlistPlay)
 	mux.HandleFunc("GET /api/feed", h.Feed)

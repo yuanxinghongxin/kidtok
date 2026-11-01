@@ -7,12 +7,6 @@ server:
   read_header_timeout: "10s"
   shutdown_timeout: "5s"
 
-source:
-  # 饭太硬配置接口地址（必填），也可用环境变量 QIMENG_FANTAIYING_URL 注入
-  fantaiying_url: "http://www.饭太硬.cc/tv"
-  user_agent: "okhttp/3.15"
-  timeout: "15s"
-
 alist:
   # 自建 alist 地址，如 http://127.0.0.1:5244
   # 也可以用前端「我的 → 服务器配置」填写，那份配置存在 config.json 里，优先级更高

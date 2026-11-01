@@ -94,7 +94,7 @@ func (h *Handler) openVideoStream(client *source.Alist, ctx context.Context, fil
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", source.DefaultUserAgent)
+	req.Header.Set("User-Agent", "okhttp/3.15")
 	// 透传 Range，保证 mpegts 拉流和进度拖动都能按需取字节。
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)

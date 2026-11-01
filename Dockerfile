@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---- 构建阶段：静态编译（纯 Go，无 cgo，前端已 embed 进二进制） ----
 FROM golang:1.22-alpine AS build
 ARG TARGETOS=linux

@@ -14,7 +14,6 @@ import (
 // Config 是服务的全部运行时配置。
 type Config struct {
 	Server Server
-	Source Source
 	Alist  Alist
 }
 
@@ -23,13 +22,6 @@ type Server struct {
 	Addr              string
 	ReadHeaderTimeout time.Duration
 	ShutdownTimeout   time.Duration
-}
-
-// Source 是上游影视源（饭太硬）相关配置。
-type Source struct {
-	FantaiyingURL string
-	UserAgent     string
-	Timeout       time.Duration
 }
 
 // Alist 是自建 alist 网盘服务相关配置。
@@ -50,10 +42,6 @@ func Default() *Config {
 			Addr:              ":8080",
 			ReadHeaderTimeout: 10 * time.Second,
 			ShutdownTimeout:   5 * time.Second,
-		},
-		Source: Source{
-			UserAgent: "okhttp/3.15",
-			Timeout:   15 * time.Second,
 		},
 		Alist: Alist{
 			Timeout: 15 * time.Second,
@@ -105,16 +93,6 @@ func (c *Config) applyFile(kv map[string]string) error {
 				return fmt.Errorf("%s: %w", key, err)
 			}
 			c.Server.ShutdownTimeout = d
-		case "source.fantaiying_url":
-			c.Source.FantaiyingURL = val
-		case "source.user_agent":
-			c.Source.UserAgent = val
-		case "source.timeout":
-			d, err := parseDuration(val)
-			if err != nil {
-				return fmt.Errorf("%s: %w", key, err)
-			}
-			c.Source.Timeout = d
 		case "alist.base_url":
 			c.Alist.BaseURL = val
 		case "alist.username":
@@ -140,19 +118,6 @@ func (c *Config) applyFile(kv map[string]string) error {
 func (c *Config) applyEnv() error {
 	if v := os.Getenv("QIMENG_SERVER_ADDR"); v != "" {
 		c.Server.Addr = v
-	}
-	if v := os.Getenv("QIMENG_FANTAIYING_URL"); v != "" {
-		c.Source.FantaiyingURL = v
-	}
-	if v := os.Getenv("QIMENG_USER_AGENT"); v != "" {
-		c.Source.UserAgent = v
-	}
-	if v := os.Getenv("QIMENG_SOURCE_TIMEOUT"); v != "" {
-		d, err := parseDuration(v)
-		if err != nil {
-			return fmt.Errorf("QIMENG_SOURCE_TIMEOUT: %w", err)
-		}
-		c.Source.Timeout = d
 	}
 	if v := os.Getenv("QIMENG_ALIST_URL"); v != "" {
 		c.Alist.BaseURL = v

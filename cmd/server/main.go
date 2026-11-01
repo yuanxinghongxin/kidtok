@@ -37,11 +37,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if cfg.Source.FantaiyingURL == "" {
-		slog.Warn("source.fantaiying_url 未配置，接口会返回配置缺失错误")
-	}
-
-	fetcher := source.NewFetcher(cfg.Source.FantaiyingURL, cfg.Source.UserAgent, cfg.Source.Timeout)
 
 	// 网盘挂载参数以 config.json 为准；文件不存在时用 config.yaml 里的 alist 段做初始值。
 	configJSON := os.Getenv("QIMENG_CONFIG_JSON")
@@ -65,7 +60,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
-		Handler:           api.NewRouter(api.NewHandler(fetcher, alistProvider, store), http.FS(webFS)),
+		Handler:           api.NewRouter(api.NewHandler(alistProvider, store), http.FS(webFS)),
 		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
 	}
 

@@ -4,6 +4,7 @@ config.yaml
 
 .git
 .gitignore
+.env
 tools/
 *.exe
 *.log

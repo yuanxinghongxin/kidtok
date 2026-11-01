@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 
@@ -12,49 +11,19 @@ import (
 
 // Handler 持有依赖，供各接口方法使用。
 type Handler struct {
-	fetcher *source.Fetcher
-	alist   *source.AlistProvider
+	alist *source.AlistProvider
 	// store 负责读写 config.json。
 	store *config.Store
 }
 
 // NewHandler 创建接口处理器。
-func NewHandler(fetcher *source.Fetcher, alist *source.AlistProvider, store *config.Store) *Handler {
-	return &Handler{fetcher: fetcher, alist: alist, store: store}
+func NewHandler(alist *source.AlistProvider, store *config.Store) *Handler {
+	return &Handler{alist: alist, store: store}
 }
 
 // alistClient 按最新配置返回客户端，未配置网盘时为 nil。
 func (h *Handler) alistClient(ctx context.Context) *source.Alist {
 	return h.alist.Client(ctx)
-}
-
-// RawConfig 处理 GET /api/config/raw：返回解密后的配置 JSON 字符串。
-func (h *Handler) RawConfig(w http.ResponseWriter, r *http.Request) {
-	config, err := h.fetcher.FetchConfig(r.Context())
-	if err != nil {
-		h.writeUpstreamError(w, err)
-		return
-	}
-	OK(w, config)
-}
-
-// Sites 处理 GET /api/sites?keyword=启蒙：返回按关键词过滤后的站点列表。
-func (h *Handler) Sites(w http.ResponseWriter, r *http.Request) {
-	keyword := r.URL.Query().Get("keyword")
-
-	config, err := h.fetcher.FetchConfig(r.Context())
-	if err != nil {
-		h.writeUpstreamError(w, err)
-		return
-	}
-
-	sites, err := source.FilterSitesByKeyword(config, keyword)
-	if err != nil {
-		slog.Error("解析配置 JSON 失败", "err", err)
-		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "上游配置解析失败: "+err.Error())
-		return
-	}
-	OK(w, sites)
 }
 
 // AlistList 处理 GET /api/alist/list?path=/&password=：列出网盘目录。
@@ -157,14 +126,4 @@ func (h *Handler) VideoURL(w http.ResponseWriter, r *http.Request) {
 // NotFound 兜底路由，保证未匹配路径也返回统一 JSON。
 func (h *Handler) NotFound(w http.ResponseWriter, r *http.Request) {
 	Fail(w, http.StatusNotFound, CodeBadRequest, "接口不存在")
-}
-
-func (h *Handler) writeUpstreamError(w http.ResponseWriter, err error) {
-	if errors.Is(err, source.ErrSourceURLMissing) {
-		slog.Warn("上游接口地址未配置", "err", err)
-		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, err.Error())
-		return
-	}
-	slog.Error("拉取上游配置失败", "err", err)
-	Fail(w, http.StatusBadGateway, CodeUpstreamErr, "拉取上游配置失败: "+err.Error())
 }
