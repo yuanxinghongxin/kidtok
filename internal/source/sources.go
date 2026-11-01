@@ -61,19 +61,21 @@ func (s *Sources) Provider(name string) VideoProvider {
 }
 
 // Drpy 返回与当前配置匹配的 drpy 源；地址或源名没填时返回 nil。
+// 栏目勾选变化也会重建实例，保证下一次 /api/feed 立刻用新的混排范围。
 func (s *Sources) Drpy() *DrpySource {
-	d := s.load().Drpy
+	cfg := s.load()
+	d := cfg.Drpy
 	if !d.Configured() {
 		return nil
 	}
 
-	key := d.BaseURL + "|" + d.Name + "|" + d.Pwd + "|" + d.Keyword
+	key := d.BaseURL + "|" + d.Name + "|" + d.Pwd + "|" + d.Keyword + "|" + strings.Join(cfg.EnabledCategories, ",")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.drpy != nil && s.drpyKey == key {
 		return s.drpy
 	}
-	s.drpy = NewDrpySource(d.BaseURL, d.Name, d.Pwd, d.Keyword, s.drpyTimeout)
+	s.drpy = NewDrpySource(d.BaseURL, d.Name, d.Pwd, d.Keyword, cfg.EnabledCategories, s.drpyTimeout)
 	s.drpyKey = key
 	return s.drpy
 }

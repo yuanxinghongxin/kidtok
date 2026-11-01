@@ -22,6 +22,10 @@ type FeedItem struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"`
 	CoverURL string `json:"cover_url"`
+	// CategoryID / Category 只有接口型源（drpy）会填：
+	// 前端按栏目把视频合成一个合集，点开合集就只看这个栏目的内容。
+	CategoryID string `json:"category_id,omitempty"`
+	Category   string `json:"category,omitempty"`
 }
 
 // Feed 列出目录下的视频文件，按路径升序返回。

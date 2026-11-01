@@ -16,6 +16,23 @@ func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
 	OK(w, h.store.Get())
 }
 
+// Categories 处理 GET /api/categories：返回 drpy 源支持的全部栏目，供设置页勾选。
+func (h *Handler) Categories(w http.ResponseWriter, r *http.Request) {
+	d := h.sources.Drpy()
+	if d == nil {
+		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置 drpy 在线源，请先保存服务端地址与源名称")
+		return
+	}
+
+	cats, err := d.Categories(r.Context())
+	if err != nil {
+		slog.Error("获取 drpy 栏目列表失败", "err", err)
+		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "获取栏目列表失败: "+err.Error())
+		return
+	}
+	OK(w, cats)
+}
+
 // SaveConfig 处理 POST /api/config：校验 → 试登录 → 写入 config.json。
 // 保存后不需要重启：数据源按 config.json 实时解析，下一次 /api/feed 就会用新的默认源。
 func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +70,8 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		"primary", settings.PrimarySource,
 		"alist", settings.Alist.BaseURL(),
 		"drpy", settings.Drpy.BaseURL,
-		"drpy_source", settings.Drpy.Name)
+		"drpy_source", settings.Drpy.Name,
+		"categories", settings.EnabledCategories)
 
 	OK(w, settings)
 }
@@ -61,7 +79,8 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 // normalizeSettings 校验并规范化表单字段，第二个返回值为空表示通过。
 func normalizeSettings(s config.Settings) (config.Settings, string) {
 	out := config.Settings{
-		PrimarySource: strings.ToLower(strings.TrimSpace(s.PrimarySource)),
+		PrimarySource:     strings.ToLower(strings.TrimSpace(s.PrimarySource)),
+		EnabledCategories: normalizeIDs(s.EnabledCategories),
 		Alist: config.AlistSettings{
 			Protocol: strings.ToLower(strings.TrimSpace(s.Alist.Protocol)),
 			Host:     strings.TrimSpace(s.Alist.Host),
@@ -135,4 +154,22 @@ func normalizeSettings(s config.Settings) (config.Settings, string) {
 	}
 
 	return out, ""
+}
+
+// normalizeIDs 去空格、去空值、去重，并保持用户勾选的顺序。
+func normalizeIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, raw := range ids {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }

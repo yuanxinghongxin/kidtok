@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"qimeng-feed/internal/config"
 	"qimeng-feed/internal/source"
@@ -97,6 +98,30 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("生成 Feed 失败", "source", primary.Name(), "path", dir, "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "生成 Feed 失败: "+err.Error())
+		return
+	}
+	OK(w, items)
+}
+
+// FeedAll 处理 GET /api/feed/all?category_id=xxx：返回该栏目下的全部视频（只有标题与封面）。
+// 首页 /api/feed 仍只取第一页；合集面板按需调本接口，几百条也只渲染图片和文字。
+func (h *Handler) FeedAll(w http.ResponseWriter, r *http.Request) {
+	categoryID := strings.TrimSpace(r.URL.Query().Get("category_id"))
+	if categoryID == "" {
+		Fail(w, http.StatusBadRequest, CodeBadRequest, "缺少 category_id 参数")
+		return
+	}
+
+	drpy := h.sources.Drpy()
+	if drpy == nil {
+		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置 drpy 在线源")
+		return
+	}
+
+	items, err := drpy.AllFeedItems(r.Context(), categoryID)
+	if err != nil {
+		slog.Error("拉取栏目全部视频失败", "category_id", categoryID, "err", err)
+		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "拉取栏目全部视频失败: "+err.Error())
 		return
 	}
 	OK(w, items)

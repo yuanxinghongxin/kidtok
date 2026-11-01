@@ -12,16 +12,20 @@ import (
 
 // Settings 是前端「服务器配置」页编辑的全部内容，持久化在 config.json。
 //
-// {
-//   "primary_source": "drpy",
-//   "alist": { "protocol": "http", "host": "...", ... },
-//   "drpy":  { "base_url": "...", "name": "...", ... }
-// }
+//	{
+//	  "primary_source": "drpy",
+//	  "enabled_categories": ["2", "25"],
+//	  "alist": { "protocol": "http", "host": "...", ... },
+//	  "drpy":  { "base_url": "...", "name": "...", ... }
+//	}
 type Settings struct {
 	// PrimarySource 是首页 Feed 默认使用的数据源：alist 或 drpy。
-	PrimarySource string        `json:"primary_source"`
-	Alist         AlistSettings `json:"alist"`
-	Drpy          DrpySettings  `json:"drpy"`
+	PrimarySource string `json:"primary_source"`
+	// EnabledCategories 是设置页勾选参与首页混排的 drpy 栏目 ID；
+	// 为空时用源返回的第一个栏目。
+	EnabledCategories []string      `json:"enabled_categories"`
+	Alist             AlistSettings `json:"alist"`
+	Drpy              DrpySettings  `json:"drpy"`
 }
 
 // AlistSettings 是网盘挂载参数。
@@ -206,6 +210,9 @@ func (s *Store) write(cfg Settings) error {
 func withDefaults(s Settings) Settings {
 	if s.PrimarySource == "" {
 		s.PrimarySource = "alist"
+	}
+	if s.EnabledCategories == nil {
+		s.EnabledCategories = []string{}
 	}
 	return s
 }

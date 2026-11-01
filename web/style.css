@@ -581,7 +581,8 @@ body {
 .caption {
   margin: 0;
   max-width: 100%;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.45;
   white-space: pre-line; /* 文案里的 \n 直接换行 */
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
@@ -1128,6 +1129,58 @@ body {
   50% {
     transform: scaleY(1);
   }
+}
+
+/* 在线栏目的全量面板：封面网格。几百条也只渲染 img + 文字，
+   图片靠 loading="lazy" 按可视区加载，滚动时不会一次性下载全部封面 */
+.playlist-list.episode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 10px 8px;
+  padding: 4px 10px 20px;
+}
+
+.episode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.episode-card-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #2a2a2e;
+}
+
+.episode-card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #f2f2f5;
+  font-size: 12.5px;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.episode-card.current .episode-card-title {
+  color: var(--red);
+}
+
+/* 面板里的「加载中 / 加载失败」提示 */
+.sheet-loading {
+  padding: 18px 10px;
+  color: #9a9aa2;
+  font-size: 13px;
+  text-align: center;
 }
 
 /* ============ 底部两栏 ============ */
@@ -1762,6 +1815,58 @@ body {
 
 .cfg-section.off .cfg-group {
   opacity: 0.48;
+}
+
+/* 播放内容来源：栏目复选框，两列铺开 */
+.cfg-categories-group {
+  padding: 10px 12px;
+}
+
+.cfg-cats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cfg-cat {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 9px 11px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.68);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 11px;
+  cursor: pointer;
+}
+
+.cfg-cat input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #ffd54a;
+  cursor: pointer;
+}
+
+.cfg-cat span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfg-cat input:checked ~ span {
+  font-weight: 600;
+  color: #fff;
+}
+
+.cfg-cats-hint {
+  grid-column: 1 / -1;
+  padding: 4px 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.35);
 }
 
 /* 一组字段装在同一张卡片里，行间用 1px 分隔，接近网盘 App 的观感 */

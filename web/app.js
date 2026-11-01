@@ -128,6 +128,8 @@ const cfgAlistSection = document.getElementById('cfg-alist-section');
 const cfgDrpySection = document.getElementById('cfg-drpy-section');
 const cfgAlistBadge = document.getElementById('cfg-alist-badge');
 const cfgDrpyBadge = document.getElementById('cfg-drpy-badge');
+const cfgCategoriesSection = document.getElementById('cfg-categories-section');
+const cfgCategoriesEl = document.getElementById('cfg-categories');
 const cfgDrpyUrl = document.getElementById('cfg-drpy-url');
 const cfgDrpyName = document.getElementById('cfg-drpy-name');
 const cfgDrpyPwd = document.getElementById('cfg-drpy-pwd');
@@ -255,7 +257,10 @@ function topDirOf(path, root) {
 function interleaveByDirectory(list, root) {
   const buckets = new Map();
   list.forEach((item) => {
-    const key = topDirOf(item.path, root);
+    // 在线源按栏目分桶（每个栏目就是一个合集）；网盘源仍按一级目录分桶
+    const key = item.category_id || item.category
+      ? 'cat:' + (item.category_id || item.category)
+      : topDirOf(item.path, root);
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(item);
   });
@@ -637,10 +642,13 @@ function buildInfo(slide) {
   return info;
 }
 
-// 把某一集的信息（所属合集、第几集、作者、文案、各项计数）写进这一屏
-function applyInfo(slide, col, episodeIndex) {
-  const mock = mockFor(episodeIndex);
-  slide._episodeIndex = episodeIndex;
+// 把某一集的信息（所属合集、第几集、作者、文案、各项计数）写进这一屏。
+// ep 直接传这一屏对应的条目：在线栏目单独插入的「面板里的第 N 条」不在
+// col.episodes 里，只能靠传入的条目本身取标题与序号。
+function applyInfo(slide, col, ep) {
+  const index = ep.episodeIndex || 0;
+  const mock = mockFor(index);
+  slide._episodeIndex = index;
   slide._collectionId = col.id;
   slide._mock = mock;
   slide._liked = false;
@@ -650,11 +658,11 @@ function applyInfo(slide, col, episodeIndex) {
 
   // 胶囊文案要能一眼看出「当前是哪一季的第几集」：
   // 分季合集写成「小皮大世界 · 第2季 · 第5集」，未分季的保持原来的写法
-  const ep = col.episodes[episodeIndex] || {};
   let text = col.name;
   if (ep.season) text += ' · ' + ep.season;
-  text += ' · 第' + (ep.season ? ep.seasonIndex + 1 : episodeIndex + 1) + '集';
-  if (!ep.season) text += ' / 共 ' + col.episodes.length + ' 集';
+  text += ' · 第' + (ep.season ? ep.seasonIndex + 1 : index + 1) + '集';
+  // totalCount 是栏目全部条数（面板拉全后写入）；没有时退回已载入的集数
+  if (!ep.season) text += ' / 共 ' + (col.totalCount || col.episodes.length) + ' 集';
   tagText.textContent = text;
 
   const avatar = slide.querySelector('.avatar');
@@ -664,7 +672,8 @@ function applyInfo(slide, col, episodeIndex) {
   if (vinylCenter) vinylCenter.textContent = mock.author.slice(0, 1);
 
   slide.querySelector('.author').textContent = '@' + mock.author;
-  slide.querySelector('.caption').textContent = mock.caption;
+  // 文案位置显示视频真实标题（源里的 vod_name / 网盘文件名）
+  slide.querySelector('.caption').textContent = ep.name || col.name;
 
   const music = '@' + mock.author + ' 创作的原声';
   slide.querySelectorAll('.marquee-inner span').forEach((span) => {
@@ -793,7 +802,7 @@ function buildSlide(item, index) {
   slide.appendChild(overlay);
 
   bindScrub(slide, video);
-  applyInfo(slide, col, item.episodeIndex);
+  applyInfo(slide, col, item);
   return slide;
 }
 
@@ -1700,6 +1709,7 @@ function renderPlaylist(col, current) {
   }
   sheetSub.textContent = sub;
   sheetList.innerHTML = '';
+  sheetList.classList.remove('episode-grid');
 
   let lastSeason = '';
   col.episodes.forEach((ep, index) => {
@@ -1770,20 +1780,133 @@ function renderPlaylist(col, current) {
 // 把「正在播放」的那一集滚到面板可视区中间。必须在面板显示之后再调用，
 // 因为 .sheet[hidden] 时是 display:none，没有布局，scrollIntoView 不会生效。
 function scrollToCurrentEpisode() {
-  const currentEl = sheetList.querySelector('.episode-item.current');
+  const currentEl = sheetList.querySelector('.episode-item.current, .episode-card.current');
   if (currentEl) currentEl.scrollIntoView({ block: 'center' });
+}
+
+function showSheet() {
+  sheet.hidden = false;
+  requestAnimationFrame(() => {
+    sheet.classList.add('open');
+    scrollToCurrentEpisode();
+  });
+}
+
+// 在线栏目的全部内容：按栏目 ID 缓存一份（一次会话内不重复翻页几十次）。
+// 失败时不缓存，下次打开面板可以重试。
+const categoryAllCache = new Map();
+
+function loadCategoryAll(categoryId) {
+  if (!categoryAllCache.has(categoryId)) {
+    categoryAllCache.set(
+      categoryId,
+      api('/api/feed/all?category_id=' + encodeURIComponent(categoryId))
+    );
+  }
+  return categoryAllCache.get(categoryId);
 }
 
 function openSheet(slide) {
   if (!slide || !collections.length) return;
   const col = getCollection(slide._collectionId);
   if (!col || !col.episodes.length) return;
+  if (col.categoryId) {
+    // 在线栏目：先是首页那 30 条，面板里再按需拉全栏目几百条
+    openCategorySheet(col, slide._episodeIndex || 0);
+    return;
+  }
   renderPlaylist(col, slide._episodeIndex || 0);
-  sheet.hidden = false;
-  requestAnimationFrame(() => {
-    sheet.classList.add('open');
-    scrollToCurrentEpisode();
+  showSheet();
+}
+
+async function openCategorySheet(col, current) {
+  sheetTitle.textContent = col.name;
+  sheetSub.textContent = '正在加载全部内容…';
+  sheetList.classList.remove('episode-grid');
+  sheetList.innerHTML = '';
+  const loading = document.createElement('div');
+  loading.className = 'sheet-loading';
+  loading.textContent = '加载中…';
+  sheetList.appendChild(loading);
+  showSheet();
+
+  try {
+    const items = await loadCategoryAll(col.categoryId);
+    col.totalCount = items.length;
+    renderCategoryGrid(col, items, current);
+    requestAnimationFrame(scrollToCurrentEpisode);
+  } catch (err) {
+    categoryAllCache.delete(col.categoryId);
+    // 拉全失败时退回首页已载入的那一页，至少还能选集
+    renderPlaylist(col, current);
+    const note = document.createElement('div');
+    note.className = 'sheet-loading';
+    note.textContent = '全部内容加载失败：' + err.message;
+    sheetList.prepend(note);
+  }
+}
+
+// 面板网格：几百条只渲染封面 + 标题，图片用浏览器原生懒加载。
+function renderCategoryGrid(col, items, current) {
+  sheetTitle.textContent = col.name;
+  sheetSub.textContent = '共 ' + items.length + ' 集';
+  sheetList.innerHTML = '';
+  sheetList.classList.add('episode-grid');
+
+  const fragment = document.createDocumentFragment();
+  items.forEach((item, index) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'episode-card' + (index === current ? ' current' : '');
+
+    const thumb = document.createElement('img');
+    thumb.className = 'episode-card-cover';
+    thumb.loading = 'lazy';
+    thumb.decoding = 'async';
+    thumb.alt = '';
+    // 没封面时不设 src：空 src 会让浏览器额外请求一次本页面
+    if (item.cover_url) thumb.src = item.cover_url;
+
+    const title = document.createElement('div');
+    title.className = 'episode-card-title';
+    title.textContent = item.name;
+
+    card.appendChild(thumb);
+    card.appendChild(title);
+    card.addEventListener('click', () => playCategoryItem(col, item, items, index));
+    fragment.appendChild(card);
   });
+  sheetList.appendChild(fragment);
+}
+
+// 面板里点某一条：把它的播放数据插到当前屏后面并跳过去，不重建整个栏目。
+function playCategoryItem(col, item, items, index) {
+  closeSheet();
+
+  // 首页已载入的那 30 条直接跳过去，不重复插入
+  const existed = dataSource.findIndex((ep) => ep.path === item.path);
+  if (existed >= 0) {
+    jumpToIndex(existed);
+    return;
+  }
+
+  const ep = {
+    path: item.path,
+    name: item.name,
+    cover: item.cover_url,
+    collectionId: col.id,
+    episodeIndex: index,
+    season: '',
+    seasonIndex: index,
+    seasonCount: 0,
+    seasonTotal: col.seasonTotal || 0,
+  };
+  col.totalCount = items.length;
+  // 插到当前播放的下一屏：看完这条继续往下滑，仍然是原来的信息流
+  const pos = Math.min(currentPlayIndex + 1, dataSource.length);
+  dataSource.splice(pos, 0, ep);
+  renderList(dataSource, currentMode);
+  jumpToIndex(pos);
 }
 
 function closeSheet() {
@@ -1910,7 +2033,8 @@ function renderCollections() {
     title.textContent = col.name;
     const sub = document.createElement('div');
     sub.className = 'collection-card-sub';
-    let subText = '共 ' + col.episodes.length + ' 集';
+    // 面板拉全过就显示栏目真实总集数，否则先显示首页已载入的条数
+    let subText = '共 ' + (col.totalCount || col.episodes.length) + ' 集';
     if (col.seasonTotal > 1) subText += ' · ' + col.seasonTotal + ' 季';
     // 单季合集把季名也写出来，点进去前就知道是哪一季
     if (col.seasonTotal === 1 && first && first.season) subText += ' · ' + first.season;
@@ -2136,6 +2260,8 @@ function hideConfigError() {
 
 // 当前选中的默认数据源（alist / drpy）
 let loadedPrimarySource = 'alist';
+// 已保存的栏目 ID：设置页打开时用来给复选框打勾
+let loadedCategoryIds = [];
 
 function selectedPrimarySource() {
   const checked = [...cfgPrimaryInputs].find((input) => input.checked);
@@ -2153,6 +2279,7 @@ function syncPrimaryUI() {
   const primary = selectedPrimarySource();
   cfgAlistSection.classList.toggle('off', primary !== 'alist');
   cfgDrpySection.classList.toggle('off', primary !== 'drpy');
+  cfgCategoriesSection.classList.toggle('off', primary !== 'drpy');
   cfgAlistBadge.hidden = primary !== 'alist';
   cfgDrpyBadge.hidden = primary !== 'drpy';
 }
@@ -2177,6 +2304,10 @@ function applyConfigForm(data) {
   cfgDrpyName.value = drpy.name || '';
   cfgDrpyPwd.value = drpy.pwd || '';
   cfgDrpyKeyword.value = drpy.keyword || '';
+
+  loadedCategoryIds = Array.isArray(data.enabled_categories)
+    ? data.enabled_categories.map(String)
+    : [];
 
   cfgPassword.type = 'password';
   cfgEye.innerHTML = ICONS.eyeOff;
@@ -2236,6 +2367,49 @@ async function openConfigPage() {
   } catch (err) {
     showConfigError('读取当前配置失败：' + err.message);
   }
+  // 栏目列表来自在线源，等它渲染完再允许保存，避免保存时把已勾选的栏目清空
+  await loadCategories();
+}
+
+// 设置页「播放内容来源」：拉取当前源的全部栏目，并按已保存的配置打勾
+async function loadCategories() {
+  cfgCategoriesEl.innerHTML = '';
+  const hint = document.createElement('span');
+  hint.className = 'cfg-cats-hint';
+  hint.textContent = '加载中…';
+  cfgCategoriesEl.appendChild(hint);
+
+  let categories;
+  try {
+    categories = await api('/api/categories');
+  } catch (err) {
+    hint.textContent = '获取栏目失败：' + err.message + '（先填写并保存 Drpy 配置后重试）';
+    return;
+  }
+
+  if (!Array.isArray(categories) || categories.length === 0) {
+    hint.textContent = '这个源没有返回任何栏目';
+    return;
+  }
+
+  cfgCategoriesEl.innerHTML = '';
+  categories.forEach((cat) => {
+    const id = String(cat.id);
+    const label = document.createElement('label');
+    label.className = 'cfg-cat';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'enabled_category';
+    input.value = id;
+    input.checked = loadedCategoryIds.includes(id);
+
+    const text = document.createElement('span');
+    text.textContent = String(cat.name || id);
+
+    label.append(input, text);
+    cfgCategoriesEl.appendChild(label);
+  });
 }
 
 function closeConfigPage() {
@@ -2280,6 +2454,9 @@ cfgForm.addEventListener('submit', async (event) => {
   const primary = selectedPrimarySource();
   const payload = {
     primary_source: primary,
+    // 勾选的栏目 ID；一个都没勾时后端默认用源里的第一个栏目
+    enabled_categories: [...cfgCategoriesEl.querySelectorAll('input[name="enabled_category"]:checked')]
+      .map((input) => input.value),
     alist: {
       protocol: cfgProtocol.value,
       host: cfgAddress.value.trim(),
@@ -2450,14 +2627,19 @@ function buildEpisodes(items, collectionId) {
     return { item, season: seasonOfDir(dirPath) };
   });
 
-  entries.sort((a, b) => {
-    const ao = a.season ? a.season.order : Number.MAX_SAFE_INTEGER;
-    const bo = b.season ? b.season.order : Number.MAX_SAFE_INTEGER;
-    if (ao !== bo) return ao - bo;
-    const ap = a.item.path.toLowerCase();
-    const bp = b.item.path.toLowerCase();
-    return ap < bp ? -1 : ap > bp ? 1 : 0;
-  });
+  // 在线源的 path 是「drpy:栏目$ID@@名称@@封面URL」，里面混着封面地址的 /，
+  // 不能按季/文件名排序，保持栏目接口返回的顺序即可（就是最新更新的顺序）。
+  const online = items.some((item) => item.category_id || item.category);
+  if (!online) {
+    entries.sort((a, b) => {
+      const ao = a.season ? a.season.order : Number.MAX_SAFE_INTEGER;
+      const bo = b.season ? b.season.order : Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      const ap = a.item.path.toLowerCase();
+      const bp = b.item.path.toLowerCase();
+      return ap < bp ? -1 : ap > bp ? 1 : 0;
+    });
+  }
 
   const seasonCounts = new Map();
   entries.forEach(({ season }) => {
@@ -2516,7 +2698,21 @@ async function boot() {
     // 但文件夹名是「第 1 季」这类分季目录时，合集往上取一层，同一部的各季合并。
     const groups = new Map();
     data.forEach((item) => {
-      // drpy 条目的 path 是 "drpy:<vod_id>"，没有目录层级，全部归到一个合集里
+      // 在线源按栏目合成合集（儿歌 / 故事 / 国学…），点开合集就只看这个栏目
+      if (item.category_id || item.category) {
+        const key = 'cat:' + (item.category_id || item.category);
+        if (!groups.has(key)) {
+          groups.set(key, {
+            name: item.category || '在线内容',
+            // 记住栏目 ID：合集面板要按它去拉该栏目的全部视频
+            categoryId: item.category_id || '',
+            items: [],
+          });
+        }
+        groups.get(key).items.push(item);
+        return;
+      }
+      // 网盘条目的 path 是目录层级，按所属文件夹归合集
       const dirPath = item.path.indexOf('/') >= 0
         ? item.path.slice(0, item.path.lastIndexOf('/'))
         : '/';
@@ -2530,6 +2726,8 @@ async function boot() {
       const col = {
         id: 'col-' + colIndex,
         name: group.name,
+        // 在线栏目才有 categoryId；网盘合集为空，面板仍按已载入的集数展示
+        categoryId: group.categoryId || '',
         episodes: [],
       };
       // 同一部的各季合并成一个合集：按季排好序，并给每集标上所属季与季内序号
