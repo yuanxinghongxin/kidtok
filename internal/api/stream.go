@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,54 +21,98 @@ var streamClient = &http.Client{
 	},
 }
 
-// 访问网盘直链必须使用非浏览器 UA：百度 dlink 对浏览器 UA 直接返回 403，
-// 只有客户端类 UA（如 okhttp）才会放行（实测 Chrome UA 一律 403）。
-
-// VideoStream 处理 GET /api/video/stream?path=<视频路径>：把网盘直链以同源流的形式转发。
-// 浏览器直连 baidupcs.com 会被 Chrome 的 ORB（Opaque Response Blocking）拦截，
-// 由本服务代理后视频与页面同源，同时规避跨域与防盗链。
+// VideoStream 处理 GET /api/video/stream?path=<条目路径>：把上游直链以同源流的形式转发。
+//
+// 浏览器直连第三方直链会遇到两类问题：跨域（CORS）与防盗链（403）。
+// 由本服务代理后视频与页面同源，同时 Referer / User-Agent 由服务端补齐，
+// 这些头不会暴露给浏览器。
 func (h *Handler) VideoStream(w http.ResponseWriter, r *http.Request) {
-	client := h.alistClient(r.Context())
-	if client == nil {
-		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置 alist 网盘源")
-		return
-	}
-
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
+	itemPath := r.URL.Query().Get("path")
+	if itemPath == "" {
 		Fail(w, http.StatusBadRequest, CodeBadRequest, "缺少 path 参数")
 		return
 	}
-	password := r.URL.Query().Get("password")
-	rangeHeader := r.Header.Get("Range")
 
-	resp, err := h.openVideoStream(client, r.Context(), filePath, password, rangeHeader)
-	if err != nil {
-		slog.Error("请求网盘直链失败", "path", filePath, "err", err)
-		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "请求网盘直链失败: "+err.Error())
+	provider := h.providerForPath(itemPath)
+	if provider == nil {
+		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "对应的视频源未配置")
 		return
+	}
+
+	src, err := provider.Resolve(r.Context(), itemPath, r.URL.Query().Get("password"))
+	if err != nil {
+		slog.Error("解析播放地址失败", "source", provider.Name(), "path", itemPath, "err", err)
+		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "解析播放地址失败: "+err.Error())
+		return
+	}
+
+	rangeHeader := r.Header.Get("Range")
+	resp, err := openUpstream(r.Context(), src, rangeHeader)
+	if err != nil {
+		slog.Error("请求上游直链失败", "source", provider.Name(), "path", itemPath, "err", err)
+		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "请求上游直链失败: "+err.Error())
+		return
+	}
+
+	// 直链可能在上游提前作废（403）：丢掉缓存重取一次再试。
+	if resp.StatusCode == http.StatusForbidden {
+		slog.Warn("上游直链返回 403，刷新后重试", "path", itemPath)
+		resp.Body.Close()
+		if inv, ok := provider.(interface {
+			Invalidate(context.Context, string)
+		}); ok {
+			inv.Invalidate(r.Context(), itemPath)
+		}
+		if src, err = provider.Resolve(r.Context(), itemPath, r.URL.Query().Get("password")); err != nil {
+			Fail(w, http.StatusBadGateway, CodeUpstreamErr, "刷新播放地址失败: "+err.Error())
+			return
+		}
+		if resp, err = openUpstream(r.Context(), src, rangeHeader); err != nil {
+			Fail(w, http.StatusBadGateway, CodeUpstreamErr, "刷新后请求直链失败: "+err.Error())
+			return
+		}
 	}
 	defer resp.Body.Close()
 
-	// 缓存中的直链可能在有效期内被网盘提前作废（403）：丢掉缓存，用最新直链重试一次。
-	if resp.StatusCode == http.StatusForbidden {
-		slog.Warn("直链返回 403，刷新后重试", "path", filePath)
-		resp.Body.Close()
-		client.InvalidateVideoURL(filePath)
-		if resp, err = h.openVideoStream(client, r.Context(), filePath, password, rangeHeader); err != nil {
-			slog.Error("刷新直链后仍失败", "path", filePath, "err", err)
-			Fail(w, http.StatusBadGateway, CodeUpstreamErr, "请求网盘直链失败: "+err.Error())
-			return
-		}
-		defer resp.Body.Close()
-	}
-
 	if resp.StatusCode >= http.StatusBadRequest {
-		slog.Error("网盘直链返回错误状态", "path", filePath, "status", resp.StatusCode)
-		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "网盘直链返回状态码 "+strconv.Itoa(resp.StatusCode))
+		slog.Error("上游直链返回错误状态", "path", itemPath, "status", resp.StatusCode)
+		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "上游直链返回状态码 "+strconv.Itoa(resp.StatusCode))
 		return
 	}
 
+	// m3u8：把播放列表里的分片地址改写成走本服务代理，否则播放器会直连第三方域名再次被拦。
+	if isPlaylist(src.URL, resp.Header) {
+		h.writePlaylist(w, resp, src.URL, src.Header.Get("Referer"))
+		return
+	}
+	copyMedia(w, resp)
+}
+
+// providerForPath 按条目路径挑选数据源：带前缀的走对应接口型源，其余按网盘文件处理。
+func (h *Handler) providerForPath(itemPath string) source.VideoProvider {
+	return h.providers[source.ProviderOfPath(itemPath)]
+}
+
+// openUpstream 按解析结果发起一次上游请求，带上源要求的防盗链请求头并透传 Range。
+func openUpstream(ctx context.Context, src *source.PlaySource, rangeHeader string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.URL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造上游请求失败: %w", err)
+	}
+	for key, values := range src.Header {
+		for _, v := range values {
+			req.Header.Add(key, v)
+		}
+	}
+	// 透传 Range，保证 mpegts 拉流和进度拖动都能按需取字节。
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	return streamClient.Do(req)
+}
+
+// copyMedia 把上游字节流透传给前端，并保留支持断点续传所需的响应头。
+func copyMedia(w http.ResponseWriter, resp *http.Response) {
 	for _, key := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag"} {
 		if v := resp.Header.Get(key); v != "" {
 			w.Header().Set(key, v)
@@ -76,28 +121,8 @@ func (h *Handler) VideoStream(w http.ResponseWriter, r *http.Request) {
 	if w.Header().Get("Content-Type") == "" {
 		w.Header().Set("Content-Type", "video/mp4")
 	}
-
 	w.WriteHeader(resp.StatusCode)
 	if _, err := io.Copy(w, resp.Body); err != nil {
-		slog.Warn("视频流转发中断", "path", filePath, "err", err)
+		slog.Warn("视频流转发中断", "err", err)
 	}
-}
-
-// openVideoStream 取直链（优先走缓存）并按客户端 Range 发起一次上游请求。
-func (h *Handler) openVideoStream(client *source.Alist, ctx context.Context, filePath, password, rangeHeader string) (*http.Response, error) {
-	info, err := client.VideoURL(ctx, filePath, password)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, info.RawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "okhttp/3.15")
-	// 透传 Range，保证 mpegts 拉流和进度拖动都能按需取字节。
-	if rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
-	return streamClient.Do(req)
 }

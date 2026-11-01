@@ -7,6 +7,8 @@
 - 视频走同源代理 `/api/video/stream`，由服务端实时换取网盘直链，浏览器不会触发跨域/ORB 拦截
 - 手机端自动播放策略适配：静音起播，首次触摸后恢复声音；默认静音可在「设置」里改
 - 网盘地址、账号、视频目录都能在前端「我的 → 服务器配置」里改，保存后落盘到 `config.json`
+- 数据源可切换：自建网盘（AList）或本地 drpy-node 源，两者都实现同一套接口
+- 播放器按容器自动选择：MP4 原生播放、MPEG-TS 走 mpegts.js、m3u8 走 HLS.js（库已内嵌，不依赖 CDN）
 
 ## 快速开始（Docker）
 
@@ -68,10 +70,43 @@ docker compose pull && docker compose up -d       # 更新到最新镜像
 | `QIMENG_ALIST_PASSWORD` | 空 | AList 密码（建议用只读账号） |
 | `QIMENG_ALIST_TOKEN` | 空 | 已有 token 时填这里，填了就不再走账号登录 |
 | `QIMENG_ALIST_TIMEOUT` | `15s` | AList 请求超时，支持 `15s` 或纯数字（按秒） |
+| `QIMENG_SOURCE` | `alist` | 默认数据源：`alist` 或 `drpy` |
+| `QIMENG_DRPY_URL` | 空 | drpy-node 地址，如 `http://192.168.0.201:5757`（不带 `/api`） |
+| `QIMENG_DRPY_NAME` | 空 | drpy 源名，原样填写，如 `兔小贝[儿]`（服务端自动 URL 编码） |
+| `QIMENG_DRPY_PWD` | `dzyyds` | drpy WebAPI 口令 |
+| `QIMENG_DRPY_KEYWORD` | `儿歌` | Feed 初始数据的搜索关键词 |
+| `QIMENG_DRPY_TIMEOUT` | `10s` | drpy 接口超时 |
 | `QIMENG_CONFIG` | `config.yaml` | YAML 配置文件路径，文件不存在时只用环境变量 |
 | `QIMENG_CONFIG_JSON` | `config.json` | 前端保存的网盘配置落盘路径，镜像内默认 `/data/config.json` |
 
 优先级：**环境变量 > `config.yaml` > 内置默认值**。
+
+## 用 drpy-node 做数据源
+
+把本地 drpy-node 的源接进 Feed，只要在 `config.yaml`（或环境变量）里填上地址与源名：
+
+```yaml
+source:
+  primary: "drpy"          # alist | drpy
+  drpy:
+    base_url: "http://192.168.0.201:5757"
+    name: "兔小贝[儿]"
+    pwd: "dzyyds"
+    keyword: "儿歌"
+```
+
+Feed 的数据来自 `?ac=search&wd=儿歌`，播放时再调 `?ac=detail&ids=<vod_id>` 取 `vod_play_url` 的第一集。
+两个数据源共用一个接口（`VideoProvider`），`primary` 决定 `/api/feed` 用哪个；`drpy` 配置不完整时会自动回退到网盘。
+
+**取流与防盗链**：drpy 返回的通常是第三方直链，直接丢给 `<video>` 会撞 CORS 或 403。这里采用**后端代理**（而不是 drpy-node 自带的 `/proxy`）：
+
+- `/api/video/stream?path=drpy:/play/1404` — 前端照旧用这个同源地址，不需要知道数据源
+- `/api/proxy?url=<直链>&referer=<可选>` — 通用透传，服务端补齐 `Referer` / `User-Agent` 后 `io.Copy` 给浏览器
+- 响应是 m3u8 时会把分片、密钥、子列表地址改写成继续走 `/api/proxy` 的相对地址，避免播放器又去直连第三方域名
+
+> 播放器已内置三种：原生 `<video>`（MP4）、mpegts.js（MPEG-TS）、HLS.js（m3u8）。服务端会按响应字节自动识别容器类型，前端按类型挂载对应播放器；`.m3u8` 由 HLS.js 实例播放，滑走/切换时实例会自动销毁重建。
+
+⚠️ `/api/proxy` 是通用转发接口，适合内网自用部署；如果要暴露到公网，建议加访问控制或限制可代理的域名。
 
 ## 本地运行（不用 Docker）
 

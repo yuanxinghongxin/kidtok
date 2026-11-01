@@ -15,6 +15,30 @@ import (
 type Config struct {
 	Server Server
 	Alist  Alist
+	Source Source
+}
+
+// Source 决定 Feed 优先使用哪个视频源。
+type Source struct {
+	// Primary 是默认数据源：alist（自建网盘）或 drpy（本地 drpy-node）。
+	Primary string
+	Drpy    Drpy
+}
+
+// Drpy 是本地 drpy-node 服务相关配置。
+type Drpy struct {
+	// BaseURL 形如 http://192.168.0.201:5757，不带 /api。
+	BaseURL string
+	// Name 是源名，可能带中文和特殊符号，例如 兔小贝[儿]。
+	Name    string
+	Pwd     string
+	Keyword string
+	Timeout time.Duration
+}
+
+// Enabled 判断 drpy 源是否配置完整（地址与源名都填了才能用）。
+func (d Drpy) Enabled() bool {
+	return strings.TrimSpace(d.BaseURL) != "" && strings.TrimSpace(d.Name) != ""
 }
 
 // Server 是 HTTP 服务相关配置。
@@ -45,6 +69,14 @@ func Default() *Config {
 		},
 		Alist: Alist{
 			Timeout: 15 * time.Second,
+		},
+		Source: Source{
+			Primary: "alist",
+			Drpy: Drpy{
+				Pwd:     "dzyyds",
+				Keyword: "儿歌",
+				Timeout: 10 * time.Second,
+			},
 		},
 	}
 }
@@ -109,6 +141,22 @@ func (c *Config) applyFile(kv map[string]string) error {
 				return fmt.Errorf("%s: %w", key, err)
 			}
 			c.Alist.Timeout = d
+		case "source.primary":
+			c.Source.Primary = val
+		case "source.drpy.base_url":
+			c.Source.Drpy.BaseURL = val
+		case "source.drpy.name":
+			c.Source.Drpy.Name = val
+		case "source.drpy.pwd":
+			c.Source.Drpy.Pwd = val
+		case "source.drpy.keyword":
+			c.Source.Drpy.Keyword = val
+		case "source.drpy.timeout":
+			d, err := parseDuration(val)
+			if err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+			c.Source.Drpy.Timeout = d
 		}
 	}
 	return nil
@@ -137,6 +185,28 @@ func (c *Config) applyEnv() error {
 			return fmt.Errorf("QIMENG_ALIST_TIMEOUT: %w", err)
 		}
 		c.Alist.Timeout = d
+	}
+	if v := os.Getenv("QIMENG_SOURCE"); v != "" {
+		c.Source.Primary = v
+	}
+	if v := os.Getenv("QIMENG_DRPY_URL"); v != "" {
+		c.Source.Drpy.BaseURL = v
+	}
+	if v := os.Getenv("QIMENG_DRPY_NAME"); v != "" {
+		c.Source.Drpy.Name = v
+	}
+	if v := os.Getenv("QIMENG_DRPY_PWD"); v != "" {
+		c.Source.Drpy.Pwd = v
+	}
+	if v := os.Getenv("QIMENG_DRPY_KEYWORD"); v != "" {
+		c.Source.Drpy.Keyword = v
+	}
+	if v := os.Getenv("QIMENG_DRPY_TIMEOUT"); v != "" {
+		d, err := parseDuration(v)
+		if err != nil {
+			return fmt.Errorf("QIMENG_DRPY_TIMEOUT: %w", err)
+		}
+		c.Source.Drpy.Timeout = d
 	}
 	return nil
 }

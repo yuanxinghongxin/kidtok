@@ -5,7 +5,7 @@ package web
 
 import "embed"
 
-// Files 是嵌入的前端资源，包含 index.html、style.css、app.js 以及 PWA 的 manifest.json。
+// Files 是嵌入的前端资源，包含 index.html、style.css、app.js、播放器库以及 PWA 的 manifest.json。
 //
-//go:embed index.html style.css app.js mpegts.js manifest.json
+//go:embed index.html style.css app.js mpegts.js hls.js manifest.json
 var Files embed.FS

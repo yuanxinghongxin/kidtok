@@ -14,11 +14,15 @@ type Handler struct {
 	alist *source.AlistProvider
 	// store 负责读写 config.json。
 	store *config.Store
+	// primary 是 /api/feed 默认使用的数据源（由配置 source.primary 决定）。
+	primary source.VideoProvider
+	// providers 按名字保存所有可用数据源，取流时按路径前缀再选一次。
+	providers map[string]source.VideoProvider
 }
 
-// NewHandler 创建接口处理器。
-func NewHandler(alist *source.AlistProvider, store *config.Store) *Handler {
-	return &Handler{alist: alist, store: store}
+// NewHandler 创建接口处理器。primary 为 nil 表示没有可用数据源。
+func NewHandler(alist *source.AlistProvider, store *config.Store, primary source.VideoProvider, providers map[string]source.VideoProvider) *Handler {
+	return &Handler{alist: alist, store: store, primary: primary, providers: providers}
 }
 
 // alistClient 按最新配置返回客户端，未配置网盘时为 nil。
@@ -72,27 +76,26 @@ func (h *Handler) AlistPlay(w http.ResponseWriter, r *http.Request) {
 	OK(w, file)
 }
 
-// Feed 处理 GET /api/feed?path=/xxx：返回短视频 Feed 流（name/path/cover_url）。
+// Feed 处理 GET /api/feed?path=/xxx：按配置的数据源返回短视频 Feed 流。
+// path 对网盘源是目录，对 drpy 源可临时充当搜索关键词；不传时网盘源用服务器配置的视频路径。
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
-	client := h.alistClient(r.Context())
-	if client == nil {
-		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置 alist 网盘源")
+	if h.primary == nil {
+		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置任何视频源")
 		return
 	}
 
 	dir := r.URL.Query().Get("path")
-	if dir == "" {
-		// 未显式传目录时直接取服务器配置里的视频路径
+	if dir == "" && h.primary.Name() == "alist" {
 		dir = h.store.Get().BasePath
 	}
-	if dir == "" {
+	if dir == "" && h.primary.Name() == "alist" {
 		Fail(w, http.StatusBadRequest, CodeBadRequest, "缺少 path 参数")
 		return
 	}
 
-	items, err := client.Feed(r.Context(), dir, r.URL.Query().Get("password"))
+	items, err := h.primary.Feed(r.Context(), dir, r.URL.Query().Get("password"))
 	if err != nil {
-		slog.Error("生成 Feed 失败", "path", dir, "err", err)
+		slog.Error("生成 Feed 失败", "source", h.primary.Name(), "path", dir, "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "生成 Feed 失败: "+err.Error())
 		return
 	}

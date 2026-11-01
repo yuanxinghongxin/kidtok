@@ -15,6 +15,7 @@ func NewRouter(h *Handler, static http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/feed", h.Feed)
 	mux.HandleFunc("GET /api/video/url", h.VideoURL)
 	mux.HandleFunc("GET /api/video/stream", h.VideoStream)
+	mux.HandleFunc("GET /api/proxy", h.Proxy)
 
 	fileServer := http.FileServer(static)
 	// manifest.json 用规范的 PWA MIME 类型；提前写入 Content-Type 后

@@ -739,6 +739,8 @@ function buildSlide(item, index) {
   video.addEventListener('error', () => {
     // 切集时会先清空 src，这里跳过空源触发的错误
     if (!video._url) return;
+    // HLS 的错误交给 hls.js 实例自己处理，不要再走 mpegts 兜底
+    if (video._hls) return;
     // 编码探测已经判定解不了（mp4v / HEVC），别再浪费时间走 mpegts 兜底
     if (slide._codecBad) {
       skipUnplayable(slide, slide._codec, false);
@@ -755,8 +757,9 @@ function buildSlide(item, index) {
     startMpegts(video, slide, slide.dataset.active === '1');
   });
   // 循环：原生播放靠 loop 属性；mpegts 的 MediaSource 到片尾已 endOfStream，只能重建播放器。
+  // HLS 由 hls.js 自己按 loop 续播，这里不重建，避免把 HLS 实例误建成 mpegts 播放器。
   video.addEventListener('ended', () => {
-    if (!video._player) return;
+    if (!video._player || video._hls) return;
     video._player.destroy();
     video._player = null;
     startMpegts(video, slide, slide.dataset.active === '1');
@@ -803,6 +806,7 @@ function teardownSlides() {
     scrollWindowTimer = null;
   }
   feedEl.querySelectorAll('video').forEach((video) => {
+    destroyHls(video);
     if (video._player) {
       try {
         video._player.destroy();
@@ -1005,6 +1009,66 @@ function applyPreloadCount(value) {
   if (activeSlide) preloadNext();
 }
 
+// HLS.js 播放 m3u8：分片地址已由后端 /api/proxy 改写，浏览器只访问同源地址。
+// 切屏时必须 destroy，否则每个滑过的视频都会留着一条拉流连接和 MediaSource。
+function startHls(video, slide, autoplay) {
+  const url = video._url;
+  const hint = slide.querySelector('.hint');
+  if (!url) return;
+
+  // Safari 原生支持 HLS，直接赋 src 少一层 MSE，兼容性也更稳
+  if (typeof Hls === 'undefined' || !Hls.isSupported()) {
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+      video.loop = true;
+      if (autoplay) playVideo(video);
+      return;
+    }
+    hint.textContent = '当前浏览器不支持 HLS 播放';
+    hint.classList.add('show');
+    return;
+  }
+
+  try {
+    const hls = new Hls({ enableWorker: true, backBufferLength: 30 });
+    hls.on(Hls.Events.ERROR, (event, data) => {
+      if (!data || !data.fatal) return;
+      // 网络抖动/解码错误先尝试原地恢复，恢复不了才提示
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        hls.startLoad();
+        return;
+      }
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        hls.recoverMediaError();
+        return;
+      }
+      hint.textContent = '播放失败：' + data.details;
+      hint.classList.add('show');
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      if (autoplay && slide.dataset.active === '1') playVideo(video);
+    });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    video._hls = hls;
+    video.loop = true;
+  } catch (err) {
+    hint.textContent = 'HLS 初始化失败：' + err.message;
+    hint.classList.add('show');
+  }
+}
+
+// 销毁 HLS 实例。hls.js 的 destroy 会移除 MediaSource、断开监听并停止拉流。
+function destroyHls(video) {
+  if (!video._hls) return;
+  try {
+    video._hls.destroy();
+  } catch (err) {
+    // 已经销毁过时忽略
+  }
+  video._hls = null;
+}
+
 // mpegts.js 通过 MSE 播放 TS 流（片源后缀是 .mp4，实际容器是 MPEG-TS + H.264/AAC，
 // Chrome 原生不支持 TS 容器）。依赖同源代理支持 Range，所以 seekType 用 'range'。
 function startMpegts(video, slide, autoplay) {
@@ -1048,10 +1112,15 @@ function readFirstChunk(res) {
   return res.arrayBuffer().then((buf) => new Uint8Array(buf));
 }
 
-// 看开头几个字节判断容器：真 MP4 交给浏览器原生解码，MPEG-TS（后缀也可能叫 .mp4）交给 mpegts.js。
+// 看开头几个字节判断容器：真 MP4 交给浏览器原生解码，MPEG-TS（后缀也可能叫 .mp4）交给 mpegts.js，
+// 以 #EXTM3U 开头的播放列表交给 HLS.js。
 function containerOf(bytes) {
   if (!bytes || bytes.length < 8) return 'unknown';
   if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return 'mp4';
+  if (bytes[0] === 0x23) {
+    const head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 16)));
+    if (head.indexOf('#EXTM3U') === 0) return 'hls';
+  }
   if (bytes[0] === 0x47) return 'ts';
   if (bytes.length > 188 && bytes[188] === 0x47) return 'ts';
   return 'unknown';
@@ -1222,6 +1291,7 @@ function skipUnplayable(slide, four, stalled) {
       }
       video._player = null;
     }
+    destroyHls(video);
     pauseVideo(video);
   }
 
@@ -1303,6 +1373,14 @@ async function prepareSlide(slide) {
   }
   slide._container = container;
 
+  // m3u8：交给 HLS.js（分片已由后端代理改写成本服务地址）
+  if (container === 'hls') {
+    loadedSlides.add(slide);
+    startHls(video, slide, true);
+    armWatchdog(slide, video);
+    return;
+  }
+
   if (container === 'ts') {
     loadedSlides.add(slide);
     startMpegts(video, slide, true);
@@ -1367,6 +1445,7 @@ function releaseSlide(slide) {
 
   const video = slide.querySelector('video');
   if (!video) return;
+  destroyHls(video);
   if (video._player) {
     try {
       video._player.destroy();

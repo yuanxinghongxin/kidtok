@@ -18,3 +18,18 @@ alist:
   # 前端默认打开的视频目录，可在「我的 → 服务器配置」里修改
   root_path: "/启蒙"
   timeout: "15s"
+
+# 默认数据源：alist（自建网盘）或 drpy（本地 drpy-node）
+# drpy 需要同时填 base_url 和 name，否则不启用，也不会被选为默认源
+source:
+  primary: "drpy"
+  drpy:
+    # drpy-node 服务地址，不带 /api
+    base_url: "http://192.168.0.201:5757"
+    # 源名，原样填写，服务端会自动做 URL 编码（例如「兔小贝[儿]」）
+    name: "兔小贝[儿]"
+    # WebAPI 口令，对应 drpy 里的 ?pwd=
+    pwd: "dzyyds"
+    # Feed 的初始数据来自这个关键词的搜索结果
+    keyword: "儿歌"
+    timeout: "10s"
