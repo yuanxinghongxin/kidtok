@@ -15,13 +15,13 @@ import (
 type AlistProvider struct {
 	mu      sync.Mutex
 	timeout time.Duration
-	load    func() config.Settings
-	applied config.Settings
+	load    func() config.AlistSettings
+	applied config.AlistSettings
 	client  *Alist
 }
 
 // NewAlistProvider 创建 provider；load 每次调用都应返回磁盘上的最新配置。
-func NewAlistProvider(load func() config.Settings, timeout time.Duration) *AlistProvider {
+func NewAlistProvider(load func() config.AlistSettings, timeout time.Duration) *AlistProvider {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
@@ -45,7 +45,7 @@ func (p *AlistProvider) Client(ctx context.Context) *Alist {
 }
 
 // Apply 立即按给定配置登录，成功才替换缓存；供保存配置时做一次连通性校验。
-func (p *AlistProvider) Apply(ctx context.Context, settings config.Settings) error {
+func (p *AlistProvider) Apply(ctx context.Context, settings config.AlistSettings) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -67,7 +67,7 @@ func (p *AlistProvider) Timeout() time.Duration {
 	return p.timeout
 }
 
-func (p *AlistProvider) applyLocked(ctx context.Context, settings config.Settings) *Alist {
+func (p *AlistProvider) applyLocked(ctx context.Context, settings config.AlistSettings) *Alist {
 	client := NewAlist(settings.BaseURL(), "", p.timeout)
 	if strings.TrimSpace(settings.Username) != "" {
 		token, err := p.login(ctx, client, settings)
@@ -83,7 +83,7 @@ func (p *AlistProvider) applyLocked(ctx context.Context, settings config.Setting
 	return client
 }
 
-func (p *AlistProvider) login(ctx context.Context, client *Alist, settings config.Settings) (string, error) {
+func (p *AlistProvider) login(ctx context.Context, client *Alist, settings config.AlistSettings) (string, error) {
 	loginCtx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	return client.Login(loginCtx, settings.Username, settings.Password)

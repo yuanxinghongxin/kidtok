@@ -1666,6 +1666,104 @@ body {
   padding: 18px 18px 0;
 }
 
+/* 默认数据源：左右两段的分段选择器 */
+.cfg-source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #15151a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+}
+
+.cfg-source-label {
+  flex: none;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.cfg-segment {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+}
+
+.cfg-segment-item {
+  position: relative;
+  display: block;
+}
+
+.cfg-segment-item input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cfg-segment-item span {
+  display: block;
+  padding: 7px 13px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.62);
+  white-space: nowrap;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.cfg-segment-item input:checked + span {
+  font-weight: 700;
+  color: #0b0b0d;
+  background: #fff;
+}
+
+.cfg-tip {
+  margin: 8px 4px 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* 每个数据源一块：标题 + 字段卡片，非默认源整体压暗，仍可编辑 */
+.cfg-section {
+  margin-top: 22px;
+}
+
+.cfg-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 8px;
+}
+
+.cfg-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.cfg-badge {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0b0b0d;
+  background: #ffd54a;
+  border-radius: 999px;
+}
+
+.cfg-section .cfg-group {
+  transition: opacity 0.2s ease;
+}
+
+.cfg-section.off .cfg-group {
+  opacity: 0.48;
+}
+
 /* 一组字段装在同一张卡片里，行间用 1px 分隔，接近网盘 App 的观感 */
 .cfg-group {
   overflow: hidden;
@@ -1689,8 +1787,9 @@ body {
 
 .cfg-label {
   flex: none;
-  width: 62px;
+  min-width: 62px;
   font-size: 13px;
+  white-space: nowrap;
   color: rgba(255, 255, 255, 0.55);
 }
 

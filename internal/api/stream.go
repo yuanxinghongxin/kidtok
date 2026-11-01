@@ -90,7 +90,7 @@ func (h *Handler) VideoStream(w http.ResponseWriter, r *http.Request) {
 
 // providerForPath 按条目路径挑选数据源：带前缀的走对应接口型源，其余按网盘文件处理。
 func (h *Handler) providerForPath(itemPath string) source.VideoProvider {
-	return h.providers[source.ProviderOfPath(itemPath)]
+	return h.sources.Provider(source.ProviderOfPath(itemPath))
 }
 
 // openUpstream 按解析结果发起一次上游请求，带上源要求的防盗链请求头并透传 Range。

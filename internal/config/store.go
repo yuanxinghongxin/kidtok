@@ -10,8 +10,22 @@ import (
 	"sync"
 )
 
-// Settings 是前端「服务器配置」页编辑的网盘挂载参数，持久化在 config.json。
+// Settings 是前端「服务器配置」页编辑的全部内容，持久化在 config.json。
+//
+// {
+//   "primary_source": "drpy",
+//   "alist": { "protocol": "http", "host": "...", ... },
+//   "drpy":  { "base_url": "...", "name": "...", ... }
+// }
 type Settings struct {
+	// PrimarySource 是首页 Feed 默认使用的数据源：alist 或 drpy。
+	PrimarySource string        `json:"primary_source"`
+	Alist         AlistSettings `json:"alist"`
+	Drpy          DrpySettings  `json:"drpy"`
+}
+
+// AlistSettings 是网盘挂载参数。
+type AlistSettings struct {
 	Protocol string `json:"protocol"`
 	Host     string `json:"host"`
 	Port     string `json:"port"`
@@ -20,8 +34,17 @@ type Settings struct {
 	BasePath string `json:"base_path"`
 }
 
+// DrpySettings 是本地 drpy-node 服务参数。
+type DrpySettings struct {
+	// BaseURL 形如 http://192.168.0.201:5757，不带 /api。
+	BaseURL string `json:"base_url"`
+	Name    string `json:"name"`
+	Pwd     string `json:"pwd"`
+	Keyword string `json:"keyword"`
+}
+
 // BaseURL 拼成 http://host:port；未填 Host 时返回空串。
-func (s Settings) BaseURL() string {
+func (s AlistSettings) BaseURL() string {
 	host := strings.TrimSpace(s.Host)
 	if host == "" {
 		return ""
@@ -41,23 +64,67 @@ func (s Settings) BaseURL() string {
 	return protocol + "://" + host + ":" + port
 }
 
-// SeedFromAlist 把 config.yaml 里的 alist 段转成初始配置，仅在 config.json 不存在时使用。
-func SeedFromAlist(a Alist) Settings {
+// Configured 判断网盘是否填了地址。
+func (s AlistSettings) Configured() bool {
+	return strings.TrimSpace(s.Host) != ""
+}
+
+// Configured 判断 drpy 源是否配置完整（地址与源名都填了才能用）。
+func (d DrpySettings) Configured() bool {
+	return strings.TrimSpace(d.BaseURL) != "" && strings.TrimSpace(d.Name) != ""
+}
+
+// UnmarshalJSON 兼容旧版扁平 config.json（protocol/host/... 直接在最外层）。
+func (s *Settings) UnmarshalJSON(data []byte) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if _, ok := probe["alist"]; ok {
+		type plain Settings
+		var out plain
+		if err := json.Unmarshal(data, &out); err != nil {
+			return err
+		}
+		*s = Settings(out)
+		return nil
+	}
+	var legacy AlistSettings
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	*s = Settings{PrimarySource: "alist", Alist: legacy}
+	return nil
+}
+
+// Seed 把 config.yaml 里的 alist / source 段转成初始配置，仅在 config.json 不存在时使用。
+func Seed(a Alist, src Source) Settings {
 	s := Settings{
-		Protocol: "http",
-		Username: a.Username,
-		Password: a.Password,
-		BasePath: a.RootPath,
+		PrimarySource: strings.ToLower(strings.TrimSpace(src.Primary)),
+		Alist: AlistSettings{
+			Protocol: "http",
+			Username: a.Username,
+			Password: a.Password,
+			BasePath: a.RootPath,
+		},
+		Drpy: DrpySettings{
+			BaseURL: src.Drpy.BaseURL,
+			Name:    src.Drpy.Name,
+			Pwd:     src.Drpy.Pwd,
+			Keyword: src.Drpy.Keyword,
+		},
 	}
-	u, err := url.Parse(strings.TrimSpace(a.BaseURL))
-	if err != nil || u.Host == "" {
-		return s
+	if s.PrimarySource == "" {
+		s.PrimarySource = "alist"
 	}
-	if strings.ToLower(u.Scheme) == "https" {
-		s.Protocol = "https"
+
+	if u, err := url.Parse(strings.TrimSpace(a.BaseURL)); err == nil && u.Host != "" {
+		if strings.ToLower(u.Scheme) == "https" {
+			s.Alist.Protocol = "https"
+		}
+		s.Alist.Host = u.Hostname()
+		s.Alist.Port = u.Port()
 	}
-	s.Host = u.Hostname()
-	s.Port = u.Port()
 	return s
 }
 
@@ -78,7 +145,7 @@ func NewStore(path string, seed Settings) (*Store, error) {
 		if err := json.Unmarshal(data, &got); err != nil {
 			return nil, fmt.Errorf("解析 %s 失败: %w", path, err)
 		}
-		s.cfg = got
+		s.cfg = withDefaults(got)
 	case os.IsNotExist(err):
 		if err := s.write(seed); err != nil {
 			return nil, err
@@ -96,16 +163,22 @@ func (s *Store) Get() Settings {
 	if data, err := os.ReadFile(s.path); err == nil {
 		var got Settings
 		if json.Unmarshal(data, &got) == nil {
-			s.cfg = got
+			s.cfg = withDefaults(got)
 		}
 	}
 	return s.cfg
+}
+
+// GetAlist 只取网盘配置，供 AlistProvider 高频调用。
+func (s *Store) GetAlist() AlistSettings {
+	return s.Get().Alist
 }
 
 // Save 把配置写入 config.json。
 func (s *Store) Save(cfg Settings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cfg = withDefaults(cfg)
 	if err := s.write(cfg); err != nil {
 		return err
 	}
@@ -127,4 +200,12 @@ func (s *Store) write(cfg Settings) error {
 		return fmt.Errorf("写入 %s 失败: %w", s.path, err)
 	}
 	return nil
+}
+
+// withDefaults 补齐缺省值：没写 primary_source 时按网盘。
+func withDefaults(s Settings) Settings {
+	if s.PrimarySource == "" {
+		s.PrimarySource = "alist"
+	}
+	return s
 }

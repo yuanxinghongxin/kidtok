@@ -247,56 +247,121 @@
     </header>
 
     <form id="cfg-form" class="cfg-form" autocomplete="off">
-      <div class="cfg-group">
-        <label class="cfg-field">
-          <span class="cfg-label">协议</span>
-          <span class="cfg-control">
-            <select id="cfg-protocol" class="cfg-select" name="protocol">
-              <option value="http">HTTP</option>
-              <option value="https">HTTPS</option>
-            </select>
-            <svg class="ico cfg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg>
-          </span>
-        </label>
-
-        <label class="cfg-field">
-          <span class="cfg-label">地址</span>
-          <span class="cfg-control">
-            <input id="cfg-address" class="cfg-input" name="address" type="text" placeholder="192.168.0.201" spellcheck="false">
-          </span>
-        </label>
-
-        <label class="cfg-field">
-          <span class="cfg-label">端口</span>
-          <span class="cfg-control">
-            <input id="cfg-port" class="cfg-input" name="port" type="text" inputmode="numeric" placeholder="5244">
-          </span>
-        </label>
-
-        <label class="cfg-field">
-          <span class="cfg-label">用户名</span>
-          <span class="cfg-control">
-            <input id="cfg-username" class="cfg-input" name="username" type="text" placeholder="admin" spellcheck="false">
-          </span>
-        </label>
-
-        <label class="cfg-field">
-          <span class="cfg-label">密码</span>
-          <span class="cfg-control">
-            <input id="cfg-password" class="cfg-input" name="password" type="password" placeholder="请输入密码">
-            <button id="cfg-eye" class="cfg-eye" type="button" aria-label="显示密码">
-              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.8 21 20.2"/><path d="M10.6 6.3A9.7 9.7 0 0 1 12 6.2c4.9 0 8.4 3.1 9.6 5.8a12 12 0 0 1-2.7 3.6"/><path d="M6.2 8.1C4.4 9.5 3.2 11 2.4 12c1.2 2.7 4.7 5.8 9.6 5.8 1.5 0 2.9-.3 4.1-.9"/><path d="M10.1 10.2a2.7 2.7 0 0 0 3.8 3.8"/></svg>
-            </button>
-          </span>
-        </label>
-
-        <label class="cfg-field">
-          <span class="cfg-label">视频路径</span>
-          <span class="cfg-control">
-            <input id="cfg-video-path" class="cfg-input" name="video_path" type="text" placeholder="/影视/启蒙" spellcheck="false">
-          </span>
-        </label>
+      <!-- 默认数据源：决定首页 Feed 从哪个源取内容，保存后立即生效 -->
+      <div class="cfg-source-row">
+        <span class="cfg-source-label">默认数据源</span>
+        <div class="cfg-segment" role="radiogroup" aria-label="默认数据源">
+          <label class="cfg-segment-item">
+            <input type="radio" name="primary_source" value="alist" checked>
+            <span>本地网盘</span>
+          </label>
+          <label class="cfg-segment-item">
+            <input type="radio" name="primary_source" value="drpy">
+            <span>在线解析</span>
+          </label>
+        </div>
       </div>
+      <p class="cfg-tip">「本地网盘」读取自建 AList；「在线解析」走局域网里的 drpy-node 搜索。保存后立即切换，无需重启容器。</p>
+
+      <!-- AList 配置 -->
+      <section id="cfg-alist-section" class="cfg-section">
+        <div class="cfg-section-head">
+          <span class="cfg-section-title">AList 配置</span>
+          <span id="cfg-alist-badge" class="cfg-badge" hidden>当前默认</span>
+        </div>
+
+        <div class="cfg-group">
+          <label class="cfg-field">
+            <span class="cfg-label">协议</span>
+            <span class="cfg-control">
+              <select id="cfg-protocol" class="cfg-select" name="protocol">
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+              </select>
+              <svg class="ico cfg-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6.5 9.5 5.5 5.5 5.5-5.5"/></svg>
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">地址</span>
+            <span class="cfg-control">
+              <input id="cfg-address" class="cfg-input" name="address" type="text" placeholder="192.168.0.201" spellcheck="false">
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">端口</span>
+            <span class="cfg-control">
+              <input id="cfg-port" class="cfg-input" name="port" type="text" inputmode="numeric" placeholder="5244">
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">用户名</span>
+            <span class="cfg-control">
+              <input id="cfg-username" class="cfg-input" name="username" type="text" placeholder="admin" spellcheck="false">
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">密码</span>
+            <span class="cfg-control">
+              <input id="cfg-password" class="cfg-input" name="password" type="password" placeholder="请输入密码">
+              <button id="cfg-eye" class="cfg-eye" type="button" aria-label="显示密码">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.8 21 20.2"/><path d="M10.6 6.3A9.7 9.7 0 0 1 12 6.2c4.9 0 8.4 3.1 9.6 5.8a12 12 0 0 1-2.7 3.6"/><path d="M6.2 8.1C4.4 9.5 3.2 11 2.4 12c1.2 2.7 4.7 5.8 9.6 5.8 1.5 0 2.9-.3 4.1-.9"/><path d="M10.1 10.2a2.7 2.7 0 0 0 3.8 3.8"/></svg>
+              </button>
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">视频路径</span>
+            <span class="cfg-control">
+              <input id="cfg-video-path" class="cfg-input" name="video_path" type="text" placeholder="/启蒙" spellcheck="false">
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Drpy 配置 -->
+      <section id="cfg-drpy-section" class="cfg-section">
+        <div class="cfg-section-head">
+          <span class="cfg-section-title">Drpy 配置</span>
+          <span id="cfg-drpy-badge" class="cfg-badge" hidden>当前默认</span>
+        </div>
+
+        <div class="cfg-group">
+          <label class="cfg-field">
+            <span class="cfg-label">服务端地址</span>
+            <span class="cfg-control">
+              <input id="cfg-drpy-url" class="cfg-input" name="drpy_base_url" type="text" placeholder="http://192.168.0.201:5757" spellcheck="false" autocapitalize="off">
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">源名称</span>
+            <span class="cfg-control">
+              <input id="cfg-drpy-name" class="cfg-input" name="drpy_name" type="text" placeholder="兔小贝[儿]" spellcheck="false">
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">API 密码</span>
+            <span class="cfg-control">
+              <input id="cfg-drpy-pwd" class="cfg-input" name="drpy_pwd" type="password" placeholder="dzyyds">
+              <button id="cfg-drpy-eye" class="cfg-eye" type="button" aria-label="显示密码">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.8 21 20.2"/><path d="M10.6 6.3A9.7 9.7 0 0 1 12 6.2c4.9 0 8.4 3.1 9.6 5.8a12 12 0 0 1-2.7 3.6"/><path d="M6.2 8.1C4.4 9.5 3.2 11 2.4 12c1.2 2.7 4.7 5.8 9.6 5.8 1.5 0 2.9-.3 4.1-.9"/><path d="M10.1 10.2a2.7 2.7 0 0 0 3.8 3.8"/></svg>
+              </button>
+            </span>
+          </label>
+
+          <label class="cfg-field">
+            <span class="cfg-label">搜索词</span>
+            <span class="cfg-control">
+              <input id="cfg-drpy-keyword" class="cfg-input" name="drpy_keyword" type="text" placeholder="儿歌" spellcheck="false">
+            </span>
+          </label>
+        </div>
+      </section>
 
       <p id="cfg-error" class="cfg-error" hidden></p>
 

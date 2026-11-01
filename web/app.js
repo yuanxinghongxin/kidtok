@@ -123,6 +123,16 @@ const cfgUsername = document.getElementById('cfg-username');
 const cfgPassword = document.getElementById('cfg-password');
 const cfgVideoPath = document.getElementById('cfg-video-path');
 const cfgEye = document.getElementById('cfg-eye');
+const cfgPrimaryInputs = document.querySelectorAll('input[name="primary_source"]');
+const cfgAlistSection = document.getElementById('cfg-alist-section');
+const cfgDrpySection = document.getElementById('cfg-drpy-section');
+const cfgAlistBadge = document.getElementById('cfg-alist-badge');
+const cfgDrpyBadge = document.getElementById('cfg-drpy-badge');
+const cfgDrpyUrl = document.getElementById('cfg-drpy-url');
+const cfgDrpyName = document.getElementById('cfg-drpy-name');
+const cfgDrpyPwd = document.getElementById('cfg-drpy-pwd');
+const cfgDrpyEye = document.getElementById('cfg-drpy-eye');
+const cfgDrpyKeyword = document.getElementById('cfg-drpy-keyword');
 const cfgSave = document.getElementById('cfg-save');
 const cfgError = document.getElementById('cfg-error');
 const toastEl = document.getElementById('toast');
@@ -2124,17 +2134,74 @@ function hideConfigError() {
   cfgError.hidden = true;
 }
 
-// 当前配置回显到表单；密码默认隐藏
+// 当前选中的默认数据源（alist / drpy）
+let loadedPrimarySource = 'alist';
+
+function selectedPrimarySource() {
+  const checked = [...cfgPrimaryInputs].find((input) => input.checked);
+  return checked ? checked.value : 'alist';
+}
+
+function setPrimarySource(value) {
+  cfgPrimaryInputs.forEach((input) => {
+    input.checked = input.value === value;
+  });
+}
+
+// 默认源对应的高亮徽标；另一块整体压暗，但仍然可以编辑备用源
+function syncPrimaryUI() {
+  const primary = selectedPrimarySource();
+  cfgAlistSection.classList.toggle('off', primary !== 'alist');
+  cfgDrpySection.classList.toggle('off', primary !== 'drpy');
+  cfgAlistBadge.hidden = primary !== 'alist';
+  cfgDrpyBadge.hidden = primary !== 'drpy';
+}
+
+// 当前配置回显到表单；兼容旧版扁平结构（protocol/host 直接在顶层）
 function applyConfigForm(data) {
-  cfgProtocol.value = String(data.protocol || '').toLowerCase() === 'https' ? 'https' : 'http';
-  cfgAddress.value = data.host || '';
-  cfgPort.value = data.port || '';
-  cfgUsername.value = data.username || '';
-  cfgPassword.value = data.password || '';
-  cfgVideoPath.value = data.base_path || '';
+  const alist = data.alist || data || {};
+  const drpy = data.drpy || {};
+  const primary = String(data.primary_source || 'alist').toLowerCase();
+
+  loadedPrimarySource = primary === 'drpy' ? 'drpy' : 'alist';
+  setPrimarySource(loadedPrimarySource);
+
+  cfgProtocol.value = String(alist.protocol || '').toLowerCase() === 'https' ? 'https' : 'http';
+  cfgAddress.value = alist.host || '';
+  cfgPort.value = alist.port || '';
+  cfgUsername.value = alist.username || '';
+  cfgPassword.value = alist.password || '';
+  cfgVideoPath.value = alist.base_path || '';
+
+  cfgDrpyUrl.value = drpy.base_url || '';
+  cfgDrpyName.value = drpy.name || '';
+  cfgDrpyPwd.value = drpy.pwd || '';
+  cfgDrpyKeyword.value = drpy.keyword || '';
+
   cfgPassword.type = 'password';
   cfgEye.innerHTML = ICONS.eyeOff;
   cfgEye.setAttribute('aria-label', '显示密码');
+  cfgDrpyPwd.type = 'password';
+  cfgDrpyEye.innerHTML = ICONS.eyeOff;
+  cfgDrpyEye.setAttribute('aria-label', '显示密码');
+
+  syncPrimaryUI();
+}
+
+// 设置页「服务器配置」右侧的小字：优先展示当前默认源
+function setServerSummary(settings) {
+  if (!settings) {
+    serverSub.textContent = '未配置';
+    return;
+  }
+  if (String(settings.primary_source || '').toLowerCase() === 'drpy' && settings.drpy && settings.drpy.base_url) {
+    serverSub.textContent = 'Drpy · ' + settings.drpy.base_url;
+    return;
+  }
+  const alist = settings.alist || settings;
+  serverSub.textContent = alist.host
+    ? 'AList · ' + (alist.protocol || 'http') + '://' + alist.host + ':' + alist.port
+    : '未配置';
 }
 
 // 「我的」右上角齿轮 → 设置抽屉，从屏幕右侧滑入（半屏宽 + 毛玻璃）
@@ -2184,40 +2251,78 @@ async function loadServerSummary() {
   serverSummaryLoaded = true;
   try {
     const data = await api('/api/config');
-    serverSub.textContent = data.host
-      ? data.protocol + '://' + data.host + ':' + data.port
-      : '未配置';
+    setServerSummary(data);
   } catch (err) {
     serverSub.textContent = '未配置';
   }
 }
 
-cfgEye.addEventListener('click', () => {
-  const showing = cfgPassword.type === 'text';
-  cfgPassword.type = showing ? 'password' : 'text';
-  cfgEye.innerHTML = showing ? ICONS.eyeOff : ICONS.eye;
-  cfgEye.setAttribute('aria-label', showing ? '显示密码' : '隐藏密码');
-});
+// 密码框右侧的小眼睛：点一下在明文/密文之间切换
+function bindPasswordEye(button, input) {
+  button.addEventListener('click', () => {
+    const showing = input.type === 'text';
+    input.type = showing ? 'password' : 'text';
+    button.innerHTML = showing ? ICONS.eyeOff : ICONS.eye;
+    button.setAttribute('aria-label', showing ? '显示密码' : '隐藏密码');
+  });
+}
+
+bindPasswordEye(cfgEye, cfgPassword);
+bindPasswordEye(cfgDrpyEye, cfgDrpyPwd);
+
+// 切换默认源时立刻高亮对应配置区
+cfgPrimaryInputs.forEach((input) => input.addEventListener('change', syncPrimaryUI));
 
 cfgForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   hideConfigError();
 
+  const primary = selectedPrimarySource();
   const payload = {
-    protocol: cfgProtocol.value,
-    host: cfgAddress.value.trim(),
-    port: cfgPort.value.trim(),
-    username: cfgUsername.value.trim(),
-    password: cfgPassword.value,
-    base_path: cfgVideoPath.value.trim(),
+    primary_source: primary,
+    alist: {
+      protocol: cfgProtocol.value,
+      host: cfgAddress.value.trim(),
+      port: cfgPort.value.trim(),
+      username: cfgUsername.value.trim(),
+      password: cfgPassword.value,
+      base_path: cfgVideoPath.value.trim(),
+    },
+    drpy: {
+      base_url: cfgDrpyUrl.value.trim(),
+      name: cfgDrpyName.value.trim(),
+      pwd: cfgDrpyPwd.value.trim(),
+      keyword: cfgDrpyKeyword.value.trim(),
+    },
   };
-  if (!payload.host) {
-    showConfigError('请填写服务器地址');
-    return;
-  }
-  if (!/^\d+$/.test(payload.port)) {
-    showConfigError('端口必须是数字');
-    return;
+
+  // 只校验「当前默认源」的必填项；备用源没填也能保存，之后随时切过去
+  if (primary === 'alist') {
+    if (!payload.alist.host) {
+      showConfigError('选择本地网盘作为默认数据源时，请填写服务器地址');
+      return;
+    }
+    if (payload.alist.port && !/^\d+$/.test(payload.alist.port)) {
+      showConfigError('端口必须是数字');
+      return;
+    }
+    if (!payload.alist.port) {
+      showConfigError('请填写网盘端口');
+      return;
+    }
+  } else {
+    if (!payload.drpy.base_url) {
+      showConfigError('选择在线解析作为默认数据源时，请填写 Drpy 服务端地址');
+      return;
+    }
+    if (!/^https?:\/\//i.test(payload.drpy.base_url)) {
+      showConfigError('Drpy 服务端地址需要以 http:// 或 https:// 开头');
+      return;
+    }
+    if (!payload.drpy.name) {
+      showConfigError('请填写 Drpy 源名称');
+      return;
+    }
   }
 
   cfgSave.disabled = true;
@@ -2232,8 +2337,14 @@ cfgForm.addEventListener('submit', async (event) => {
     if (body.code !== 0) {
       throw new Error(body.msg || '保存失败');
     }
-    serverSub.textContent =
-      payload.protocol + '://' + payload.host + ':' + payload.port;
+
+    setServerSummary(body.data || payload);
+    // 默认源变了：后端已按新配置取源，前端重新加载一次 Feed 让内容真正换过来
+    if (primary !== loadedPrimarySource) {
+      showToast('配置已保存，数据源已切换生效！');
+      setTimeout(() => location.reload(), 900);
+      return;
+    }
     showToast('保存成功');
     setTimeout(closeConfigPage, 700);
   } catch (err) {
@@ -2380,11 +2491,12 @@ function buildEpisodes(items, collectionId) {
 }
 
 async function boot() {
-  // 视频目录直接取服务器配置里的 BasePath（URL 上的 path 仅用于临时调试）
+  // 视频目录直接取服务器配置里的 AList BasePath（URL 上的 path 仅用于临时调试）
   if (!params.get('path')) {
     try {
       const cfg = await api('/api/config');
-      if (cfg.base_path) currentDir = cfg.base_path;
+      const alist = cfg.alist || cfg;
+      if (alist.base_path) currentDir = alist.base_path;
     } catch (err) {
       // 配置接口不可用时继续用内置默认目录
     }
@@ -2404,7 +2516,10 @@ async function boot() {
     // 但文件夹名是「第 1 季」这类分季目录时，合集往上取一层，同一部的各季合并。
     const groups = new Map();
     data.forEach((item) => {
-      const dirPath = item.path.slice(0, item.path.lastIndexOf('/')) || '/';
+      // drpy 条目的 path 是 "drpy:<vod_id>"，没有目录层级，全部归到一个合集里
+      const dirPath = item.path.indexOf('/') >= 0
+        ? item.path.slice(0, item.path.lastIndexOf('/'))
+        : '/';
       const { key, name } = collectionDirOf(dirPath);
       if (!groups.has(key)) groups.set(key, { name, items: [] });
       groups.get(key).items.push(item);
