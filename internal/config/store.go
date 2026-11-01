@@ -10,22 +10,59 @@ import (
 	"sync"
 )
 
-// Settings 是前端「服务器配置」页编辑的全部内容，持久化在 config.json。
+// Settings 是前端「数据源配置」页编辑的全部内容，持久化在 config.json。
 //
 //	{
-//	  "primary_source": "drpy",
-//	  "enabled_categories": ["2", "25"],
 //	  "alist": { "protocol": "http", "host": "...", ... },
-//	  "drpy":  { "base_url": "...", "name": "...", ... }
+//	  "sources": [
+//	    {"id": "s1", "kind": "drpy", "name": "兔小贝", "enabled": true,
+//	     "categories": ["2"], "base_url": "...", "source_name": "兔小贝[儿]", "pwd": "dzyyds"},
+//	    {"id": "s2", "kind": "js", "name": "贝乐虎", "enabled": true,
+//	     "categories": ["65"], "script": "var rule = {...}"}
+//	  ]
 //	}
 type Settings struct {
-	// PrimarySource 是首页 Feed 默认使用的数据源：alist 或 drpy。
-	PrimarySource string `json:"primary_source"`
-	// EnabledCategories 是设置页勾选参与首页混排的 drpy 栏目 ID；
-	// 为空时用源返回的第一个栏目。
-	EnabledCategories []string      `json:"enabled_categories"`
+	// PrimarySource 是旧版单源配置的默认源标记，仅用于把旧配置迁移成 Sources。
+	PrimarySource string `json:"primary_source,omitempty"`
+	// EnabledCategories 是旧版单源配置勾选的栏目，仅用于迁移。
+	EnabledCategories []string `json:"enabled_categories,omitempty"`
 	Alist             AlistSettings `json:"alist"`
-	Drpy              DrpySettings  `json:"drpy"`
+	// Drpy 是旧版单源配置，仅用于迁移；新配置请使用 Sources。
+	Drpy DrpySettings `json:"drpy,omitempty"`
+	// Sources 是可以保存多个的在线数据源（drpy-node 或上传的 JS 规则），
+	// 首页会把所有「已启用」源里勾选的栏目合并后随机播放。
+	Sources []SourceSettings `json:"sources"`
+}
+
+// SourceSettings 是一个已保存的在线数据源。
+type SourceSettings struct {
+	ID   string `json:"id"`
+	// Kind 是数据源类型：drpy（本地 drpy-node）或 js（上传/粘贴的 drpy 规则文件）。
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	// Categories 是勾选参与首页混排的栏目 ID；为空时用源返回的第一个栏目。
+	Categories []string `json:"categories"`
+
+	// drpy-node 参数。
+	BaseURL    string `json:"base_url,omitempty"`
+	SourceName string `json:"source_name,omitempty"`
+	Pwd        string `json:"pwd,omitempty"`
+
+	// JS 规则源参数：直接保存规则文件内容，避免部署多个挂载目录。
+	Script     string `json:"script,omitempty"`
+	ScriptName string `json:"script_name,omitempty"`
+}
+
+// Configured 判断数据源参数是否完整。
+func (s SourceSettings) Configured() bool {
+	switch s.Kind {
+	case "drpy":
+		return strings.TrimSpace(s.BaseURL) != "" && strings.TrimSpace(s.SourceName) != ""
+	case "js":
+		return strings.TrimSpace(s.Script) != ""
+	}
+	return false
 }
 
 // AlistSettings 是网盘挂载参数。
@@ -36,6 +73,14 @@ type AlistSettings struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	BasePath string `json:"base_path"`
+	// Disabled 为 true 时网盘不参与首页混排（在线源仍然正常工作）。
+	// 用「是否禁用」而不是「是否启用」，是为了让旧配置（没有这个字段）默认参与。
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+// Included 判断网盘是否参与首页混排：填了视频路径且没有被禁用。
+func (s AlistSettings) Included() bool {
+	return !s.Disabled && strings.TrimSpace(s.BasePath) != ""
 }
 
 // DrpySettings 是本地 drpy-node 服务参数。
@@ -206,7 +251,8 @@ func (s *Store) write(cfg Settings) error {
 	return nil
 }
 
-// withDefaults 补齐缺省值：没写 primary_source 时按网盘。
+// withDefaults 补齐缺省值：没写 primary_source 时按网盘；
+// 旧版配置只有单个 drpy 时，自动迁移成一条 Sources 记录。
 func withDefaults(s Settings) Settings {
 	if s.PrimarySource == "" {
 		s.PrimarySource = "alist"
@@ -214,5 +260,27 @@ func withDefaults(s Settings) Settings {
 	if s.EnabledCategories == nil {
 		s.EnabledCategories = []string{}
 	}
+	if s.Sources == nil {
+		s.Sources = migrateSources(s)
+	}
 	return s
+}
+
+// migrateSources 把旧版单源 drpy 配置转成新版多数据源列表。
+func migrateSources(s Settings) []SourceSettings {
+	out := []SourceSettings{}
+	if !s.Drpy.Configured() {
+		return out
+	}
+	out = append(out, SourceSettings{
+		ID:         "drpy",
+		Kind:       "drpy",
+		Name:       strings.TrimSpace(s.Drpy.Name),
+		Enabled:    strings.EqualFold(strings.TrimSpace(s.PrimarySource), "drpy"),
+		Categories: s.EnabledCategories,
+		BaseURL:    strings.TrimSpace(s.Drpy.BaseURL),
+		SourceName: strings.TrimSpace(s.Drpy.Name),
+		Pwd:        strings.TrimSpace(s.Drpy.Pwd),
+	})
+	return out
 }

@@ -2,42 +2,83 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"qimeng-feed/internal/config"
+	"qimeng-feed/internal/source"
 )
+
+// probeTimeout 是设置页点「检测」时等待上游的最长时间。
+const probeTimeout = 15 * time.Second
 
 // Config 处理 GET /api/config：读取 config.json 回显到配置页，文件不存在时是默认值。
 func (h *Handler) Config(w http.ResponseWriter, r *http.Request) {
 	OK(w, h.store.Get())
 }
 
-// Categories 处理 GET /api/categories：返回 drpy 源支持的全部栏目，供设置页勾选。
+// Categories 处理 GET /api/categories[?source_id=]：返回已保存源的栏目，供设置页回显。
 func (h *Handler) Categories(w http.ResponseWriter, r *http.Request) {
-	d := h.sources.Drpy()
-	if d == nil {
-		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置 drpy 在线源，请先保存服务端地址与源名称")
+	o := h.onlineSourceOrFirst(r.URL.Query().Get("source_id"))
+	if o == nil {
+		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "没有已启用的在线数据源")
 		return
 	}
 
-	cats, err := d.Categories(r.Context())
+	cats, err := o.Categories(r.Context())
 	if err != nil {
-		slog.Error("获取 drpy 栏目列表失败", "err", err)
+		slog.Error("获取栏目列表失败", "source_id", o.ID(), "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "获取栏目列表失败: "+err.Error())
 		return
 	}
 	OK(w, cats)
 }
 
+// TestSource 处理 POST /api/source/test：用表单里还没保存的配置连接一次，
+// 成功返回该源的全部栏目，失败返回「连接失败：原因」。
+func (h *Handler) TestSource(w http.ResponseWriter, r *http.Request) {
+	var req config.SourceSettings
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
+		Fail(w, http.StatusBadRequest, CodeBadRequest, "请求体不是合法 JSON: "+err.Error())
+		return
+	}
+
+	normalized, msg := normalizeSource(req)
+	if msg != "" {
+		Fail(w, http.StatusBadRequest, CodeBadRequest, msg)
+		return
+	}
+	if !normalized.Configured() {
+		Fail(w, http.StatusBadRequest, CodeBadRequest, "请先填写完整的连接信息")
+		return
+	}
+
+	if normalized.Kind == "js" {
+		if _, err := source.ValidateScript(normalized.Script); err != nil {
+			Fail(w, http.StatusBadRequest, CodeBadRequest, "规则解析失败: "+err.Error())
+			return
+		}
+	}
+
+	cats, err := source.ProbeOnlineSource(r.Context(), normalized, probeTimeout)
+	if err != nil {
+		slog.Warn("数据源连接检测失败", "kind", normalized.Kind, "name", normalized.Name, "err", err)
+		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "连接失败: "+err.Error())
+		return
+	}
+	OK(w, cats)
+}
+
 // SaveConfig 处理 POST /api/config：校验 → 试登录 → 写入 config.json。
-// 保存后不需要重启：数据源按 config.json 实时解析，下一次 /api/feed 就会用新的默认源。
+// 保存后不需要重启：数据源按 config.json 实时解析，下一次 /api/feed 就会用新的配置。
 func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	var req config.Settings
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
 		Fail(w, http.StatusBadRequest, CodeBadRequest, "请求体不是合法 JSON: "+err.Error())
 		return
 	}
@@ -49,15 +90,9 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 网盘填了地址就先真实登录一次，避免把不可用的地址存下去。
-	// 当前默认源是 drpy 时，网盘登录失败不阻断保存（只是网盘源不可用）。
 	if settings.Alist.Configured() {
 		if err := h.alist.Apply(r.Context(), settings.Alist); err != nil {
-			if settings.PrimarySource == "alist" {
-				slog.Error("保存网盘配置时登录失败", "host", settings.Alist.Host, "err", err)
-				Fail(w, http.StatusBadRequest, CodeBadRequest, "登录失败，请检查地址、端口与账号密码: "+err.Error())
-				return
-			}
-			slog.Warn("网盘登录失败，但默认源是 drpy，配置仍然保存", "host", settings.Alist.Host, "err", err)
+			slog.Warn("网盘登录失败，配置仍然保存（在线源不受影响）", "host", settings.Alist.Host, "err", err)
 		}
 	}
 
@@ -66,12 +101,17 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		Fail(w, http.StatusInternalServerError, CodeUpstreamErr, "配置已生效，但写入文件失败: "+err.Error())
 		return
 	}
-	slog.Info("配置已更新，数据源立即生效",
-		"primary", settings.PrimarySource,
+
+	enabled := 0
+	for _, s := range settings.Sources {
+		if s.Enabled {
+			enabled++
+		}
+	}
+	slog.Info("数据源配置已更新",
 		"alist", settings.Alist.BaseURL(),
-		"drpy", settings.Drpy.BaseURL,
-		"drpy_source", settings.Drpy.Name,
-		"categories", settings.EnabledCategories)
+		"sources", len(settings.Sources),
+		"enabled", enabled)
 
 	OK(w, settings)
 }
@@ -79,8 +119,6 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 // normalizeSettings 校验并规范化表单字段，第二个返回值为空表示通过。
 func normalizeSettings(s config.Settings) (config.Settings, string) {
 	out := config.Settings{
-		PrimarySource:     strings.ToLower(strings.TrimSpace(s.PrimarySource)),
-		EnabledCategories: normalizeIDs(s.EnabledCategories),
 		Alist: config.AlistSettings{
 			Protocol: strings.ToLower(strings.TrimSpace(s.Alist.Protocol)),
 			Host:     strings.TrimSpace(s.Alist.Host),
@@ -88,17 +126,9 @@ func normalizeSettings(s config.Settings) (config.Settings, string) {
 			Username: strings.TrimSpace(s.Alist.Username),
 			Password: s.Alist.Password,
 			BasePath: strings.TrimSpace(s.Alist.BasePath),
+			Disabled: s.Alist.Disabled,
 		},
-		Drpy: config.DrpySettings{
-			BaseURL: strings.TrimSpace(s.Drpy.BaseURL),
-			Name:    strings.TrimSpace(s.Drpy.Name),
-			Pwd:     strings.TrimSpace(s.Drpy.Pwd),
-			Keyword: strings.TrimSpace(s.Drpy.Keyword),
-		},
-	}
-
-	if out.PrimarySource != "alist" && out.PrimarySource != "drpy" {
-		return out, "默认数据源只能是 alist 或 drpy"
+		Sources: make([]config.SourceSettings, 0, len(s.Sources)),
 	}
 
 	if out.Alist.Protocol == "" {
@@ -111,11 +141,7 @@ func normalizeSettings(s config.Settings) (config.Settings, string) {
 	out.Alist.Host = strings.TrimPrefix(out.Alist.Host, "http://")
 	out.Alist.Host = strings.TrimPrefix(out.Alist.Host, "https://")
 	out.Alist.Host = strings.TrimSuffix(out.Alist.Host, "/")
-	if out.Alist.Host == "" {
-		if out.PrimarySource == "alist" {
-			return out, "选择 AList 作为默认数据源时，请填写网盘地址"
-		}
-	} else {
+	if out.Alist.Host != "" {
 		if strings.ContainsAny(out.Alist.Host, " /") {
 			return out, "网盘地址只能是 IP 或域名，不要带路径"
 		}
@@ -123,36 +149,94 @@ func normalizeSettings(s config.Settings) (config.Settings, string) {
 		if err != nil || n < 1 || n > 65535 {
 			return out, "网盘端口必须是 1-65535 之间的数字"
 		}
-		if out.Alist.BasePath != "" && !strings.HasPrefix(out.Alist.BasePath, "/") {
-			out.Alist.BasePath = "/" + out.Alist.BasePath
-		}
+	}
+	if out.Alist.BasePath != "" && !strings.HasPrefix(out.Alist.BasePath, "/") {
+		out.Alist.BasePath = "/" + out.Alist.BasePath
 	}
 
-	if out.Drpy.BaseURL != "" {
-		if !strings.Contains(out.Drpy.BaseURL, "://") {
-			out.Drpy.BaseURL = "http://" + out.Drpy.BaseURL
+	seen := make(map[string]bool, len(s.Sources))
+	for i, raw := range s.Sources {
+		sc, msg := normalizeSource(raw)
+		if msg != "" {
+			return out, fmt.Sprintf("第 %d 个数据源：%s", i+1, msg)
 		}
-		u, err := url.Parse(out.Drpy.BaseURL)
-		if err != nil || u.Host == "" {
-			return out, "Drpy 服务端地址格式不正确，示例 http://192.168.0.201:5757"
+		if sc.ID == "" {
+			sc.ID = fmt.Sprintf("s%d", i+1)
 		}
-		if u.Scheme != "http" && u.Scheme != "https" {
-			return out, "Drpy 服务端地址只支持 http 或 https"
+		if seen[sc.ID] {
+			return out, fmt.Sprintf("数据源 ID %q 重复", sc.ID)
 		}
-		out.Drpy.BaseURL = strings.TrimRight(out.Drpy.BaseURL, "/")
+		seen[sc.ID] = true
+		out.Sources = append(out.Sources, sc)
 	}
-	if out.Drpy.Keyword == "" {
-		out.Drpy.Keyword = "儿歌"
-	}
-	if out.PrimarySource == "drpy" {
-		if out.Drpy.BaseURL == "" {
-			return out, "选择 Drpy 作为默认数据源时，请填写服务端地址"
-		}
-		if out.Drpy.Name == "" {
-			return out, "选择 Drpy 作为默认数据源时，请填写源名称"
-		}
+	return out, ""
+}
+
+// normalizeSource 校验单个数据源配置。
+func normalizeSource(s config.SourceSettings) (config.SourceSettings, string) {
+	out := config.SourceSettings{
+		ID:         strings.TrimSpace(s.ID),
+		Kind:       strings.ToLower(strings.TrimSpace(s.Kind)),
+		Name:       strings.TrimSpace(s.Name),
+		Enabled:    s.Enabled,
+		Categories: normalizeIDs(s.Categories),
+		BaseURL:    strings.TrimSpace(s.BaseURL),
+		SourceName: strings.TrimSpace(s.SourceName),
+		Pwd:        strings.TrimSpace(s.Pwd),
+		Script:     s.Script,
+		ScriptName: strings.TrimSpace(s.ScriptName),
 	}
 
+	switch out.Kind {
+	case "drpy":
+		if out.Pwd == "" {
+			out.Pwd = source.DrpyDefaultPwd
+		}
+		if out.BaseURL != "" {
+			if !strings.Contains(out.BaseURL, "://") {
+				out.BaseURL = "http://" + out.BaseURL
+			}
+			u, err := url.Parse(out.BaseURL)
+			if err != nil || u.Host == "" {
+				return out, "drpy 服务端地址格式不正确，示例 http://192.168.0.201:5757"
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return out, "drpy 服务端地址只支持 http 或 https"
+			}
+			out.BaseURL = strings.TrimRight(out.BaseURL, "/")
+		}
+		if out.Name == "" {
+			out.Name = out.SourceName
+		}
+		if out.Enabled && out.SourceName == "" {
+			return out, "启用 drpy 数据源前请填写源名称"
+		}
+		if out.Enabled && out.BaseURL == "" {
+			return out, "启用 drpy 数据源前请填写服务端地址"
+		}
+	case "js":
+		out.Script = strings.TrimSpace(s.Script)
+		if out.Name == "" {
+			out.Name = out.ScriptName
+		}
+		if out.Script != "" {
+			title, err := source.ValidateScript(out.Script)
+			if err != nil {
+				return out, err.Error()
+			}
+			if out.Name == "" {
+				out.Name = title
+			}
+		}
+		if out.Enabled && out.Script == "" {
+			return out, "启用 JS 数据源前请上传或粘贴规则文件"
+		}
+		if out.Enabled && out.Name == "" {
+			out.Name = "JS 数据源"
+		}
+	default:
+		return out, "数据源类型只能是 drpy 或 js"
+	}
 	return out, ""
 }
 

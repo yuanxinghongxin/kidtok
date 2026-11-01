@@ -1,6 +1,12 @@
 package source
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -11,7 +17,7 @@ import (
 // Sources 按 config.json 的最新内容提供数据源。
 //
 // 保存配置后不需要重启：每次取源都会重新读一遍磁盘上的配置，
-// 默认源随 primary_source 切换，drpy 参数变化时会重建 DrpySource（连同缓存一起清掉）。
+// 配置变化时重建全部在线源实例（连同缓存一起清掉）。
 type Sources struct {
 	load        func() config.Settings
 	alist       *AlistSource
@@ -19,9 +25,11 @@ type Sources struct {
 	// static 是不随配置变化的数据源（目前只有兔小贝直连），用名字直接索引。
 	static map[string]VideoProvider
 
-	mu      sync.Mutex
-	drpyKey string
-	drpy    *DrpySource
+	mu       sync.Mutex
+	key      string
+	online   map[string]*OnlineSource
+	ordered  []string
+	router   *onlineRouter
 }
 
 // NewSources 创建数据源管理器。alist 为网盘 provider，static 可为 nil。
@@ -29,53 +37,202 @@ func NewSources(load func() config.Settings, alist *AlistProvider, drpyTimeout t
 	if drpyTimeout <= 0 {
 		drpyTimeout = 10 * time.Second
 	}
-	return &Sources{
+	s := &Sources{
 		load:        load,
 		alist:       NewAlistSource(alist),
 		drpyTimeout: drpyTimeout,
 		static:      static,
 	}
+	s.router = &onlineRouter{sources: s}
+	return s
 }
 
-// Primary 返回当前默认数据源：按 primary_source 选，选中的源没配好时回退到网盘。
+// Primary 返回首页默认数据源：有启用的在线源时是混合流，否则回退到网盘。
 func (s *Sources) Primary() VideoProvider {
-	cfg := s.load()
-	if strings.EqualFold(strings.TrimSpace(cfg.PrimarySource), "drpy") {
-		if d := s.Drpy(); d != nil {
-			return d
-		}
+	if len(s.onlineSources()) > 0 {
+		return s.router
 	}
 	return s.alist
 }
 
-// Provider 按名字返回数据源；未配置（如 drpy 没填地址）时返回 nil。
+// Provider 按名字返回数据源；未配置（如在线源没填完整）时返回 nil。
 func (s *Sources) Provider(name string) VideoProvider {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "alist":
 		return s.alist
-	case "drpy":
-		return s.Drpy()
+	case "online", "drpy":
+		if len(s.onlineSources()) == 0 {
+			return nil
+		}
+		return s.router
 	default:
 		return s.static[name]
 	}
 }
 
-// Drpy 返回与当前配置匹配的 drpy 源；地址或源名没填时返回 nil。
-// 栏目勾选变化也会重建实例，保证下一次 /api/feed 立刻用新的混排范围。
-func (s *Sources) Drpy() *DrpySource {
-	cfg := s.load()
-	d := cfg.Drpy
-	if !d.Configured() {
-		return nil
-	}
+// Online 返回指定 ID 的在线源；未配置或未启用时返回 nil。
+func (s *Sources) Online(sourceID string) *OnlineSource {
+	return s.onlineByID(sourceID)
+}
 
-	key := d.BaseURL + "|" + d.Name + "|" + d.Pwd + "|" + d.Keyword + "|" + strings.Join(cfg.EnabledCategories, ",")
+// OnlineList 返回全部已启用的在线源（按配置顺序）。
+func (s *Sources) OnlineList() []*OnlineSource {
+	all := s.onlineSources()
+	out := make([]*OnlineSource, 0, len(all))
+	for _, id := range s.orderedSnapshot() {
+		if o := all[id]; o != nil {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+func (s *Sources) orderedSnapshot() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.drpy != nil && s.drpyKey == key {
-		return s.drpy
+	return append([]string(nil), s.ordered...)
+}
+
+func (s *Sources) onlineByID(id string) *OnlineSource {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
 	}
-	s.drpy = NewDrpySource(d.BaseURL, d.Name, d.Pwd, d.Keyword, cfg.EnabledCategories, s.drpyTimeout)
-	s.drpyKey = key
-	return s.drpy
+	return s.onlineSources()[id]
+}
+
+func (s *Sources) firstOnlineID() string {
+	order := s.orderedSnapshot()
+	if len(order) == 0 {
+		return ""
+	}
+	return order[0]
+}
+
+// onlineSources 按当前配置构建在线源集合；配置未变时直接复用。
+func (s *Sources) onlineSources() map[string]*OnlineSource {
+	cfg := s.load()
+	key := sourcesKey(cfg.Sources)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.online != nil && s.key == key {
+		return s.online
+	}
+
+	built := make(map[string]*OnlineSource, len(cfg.Sources))
+	order := make([]string, 0, len(cfg.Sources))
+	for _, sc := range cfg.Sources {
+		sc.ID = strings.TrimSpace(sc.ID)
+		if sc.ID == "" || !sc.Enabled || !sc.Configured() {
+			continue
+		}
+		if _, exists := built[sc.ID]; exists {
+			continue
+		}
+		o, err := newOnlineSource(sc, s.drpyTimeout)
+		if err != nil {
+			slog.Warn("在线数据源初始化失败", "source_id", sc.ID, "name", sc.Name, "err", err)
+			continue
+		}
+		built[sc.ID] = o
+		order = append(order, sc.ID)
+	}
+	s.online = built
+	s.ordered = order
+	s.key = key
+	return built
+}
+
+// sourcesKey 是配置指纹：源列表任何字段变化都会触发重建。
+func sourcesKey(list []config.SourceSettings) string {
+	data, err := json.Marshal(list)
+	if err != nil {
+		return fmt.Sprintf("%v", list)
+	}
+	return string(data)
+}
+
+// MixedFeed 把全部已启用数据源的勾选栏目合并后随机打乱。
+// 网盘源按「基础视频路径」参与混排；没有任何在线源时保留原来按目录浏览的行为。
+func (s *Sources) MixedFeed(ctx context.Context, dir string) ([]FeedItem, error) {
+	cfg := s.load()
+	online := s.onlineSources()
+
+	if len(online) == 0 {
+		if !cfg.Alist.Configured() || cfg.Alist.Disabled {
+			return nil, errors.New("还没有启用任何数据源")
+		}
+		if strings.TrimSpace(dir) == "" {
+			dir = cfg.Alist.BasePath
+		}
+		if strings.TrimSpace(dir) == "" {
+			return nil, errors.New("缺少网盘目录")
+		}
+		return s.alist.Feed(ctx, dir, "")
+	}
+
+	type result struct {
+		name  string
+		items []FeedItem
+		err   error
+	}
+	results := make(chan result, len(online)+1)
+	var wg sync.WaitGroup
+
+	order := s.orderedSnapshot()
+	for _, id := range order {
+		o := online[id]
+		if o == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(o *OnlineSource) {
+			defer wg.Done()
+			items, err := o.Feed(ctx)
+			results <- result{name: o.Name(), items: items, err: err}
+		}(o)
+	}
+
+	// 网盘源也参与混排：勾选栏目的语义换成「基础视频路径」。
+	if cfg.Alist.Configured() && cfg.Alist.Included() {
+		wg.Add(1)
+		go func(basePath string) {
+			defer wg.Done()
+			items, err := s.alist.Feed(ctx, basePath, "")
+			for i := range items {
+				items[i].Category = "本地网盘"
+			}
+			results <- result{name: "本地网盘", items: items, err: err}
+		}(cfg.Alist.BasePath)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	all := make([]FeedItem, 0, 256)
+	var firstErr error
+	for r := range results {
+		if r.err != nil {
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			slog.Warn("数据源拉取失败，已跳过", "source", r.name, "err", r.err)
+			continue
+		}
+		all = append(all, r.items...)
+	}
+	if len(all) == 0 {
+		if firstErr != nil {
+			return nil, fmt.Errorf("所有数据源都拉取失败: %w", firstErr)
+		}
+		return nil, errors.New("已启用的数据源都没有内容")
+	}
+
+	rand.Shuffle(len(all), func(i, j int) {
+		all[i], all[j] = all[j], all[i]
+	})
+	return all, nil
 }

@@ -11,6 +11,7 @@ func NewRouter(h *Handler, static http.FileSystem) http.Handler {
 	mux.HandleFunc("GET /api/config", h.Config)
 	mux.HandleFunc("POST /api/config", h.SaveConfig)
 	mux.HandleFunc("GET /api/categories", h.Categories)
+	mux.HandleFunc("POST /api/source/test", h.TestSource)
 	mux.HandleFunc("GET /api/alist/list", h.AlistList)
 	mux.HandleFunc("GET /api/alist/play", h.AlistPlay)
 	mux.HandleFunc("GET /api/feed", h.Feed)

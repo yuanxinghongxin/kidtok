@@ -29,6 +29,8 @@ type DrpySource struct {
 	keyword string
 	// categories 是设置页勾选参与首页混排的栏目 ID；为空时用源返回的第一个栏目。
 	categories []string
+	// sourceID 是多数据源配置里的源 ID；为空表示旧版单源模式。
+	sourceID string
 
 	mu    sync.Mutex
 	cache map[string]cachedPlay
@@ -58,6 +60,9 @@ func NewDrpySource(baseURL, sourceName, pwd, keyword string, categories []string
 
 // Name 实现 VideoProvider。
 func (s *DrpySource) Name() string { return "drpy" }
+
+// SetSourceID 设置多数据源配置里的源 ID；设置后 FeedItem.Path 会带上源 ID。
+func (s *DrpySource) SetSourceID(id string) { s.sourceID = strings.TrimSpace(id) }
 
 // Categories 返回当前源支持的全部栏目，供设置页勾选（带 10 分钟缓存）。
 func (s *DrpySource) Categories(ctx context.Context) ([]DrpyCategory, error) {
@@ -99,14 +104,20 @@ func (s *DrpySource) searchFeed(ctx context.Context, keyword string) ([]FeedItem
 	if len(videos) == 0 {
 		return nil, fmt.Errorf("搜索「%s」没有结果", keyword)
 	}
-	return toFeedItems(videos, "", ""), nil
+	return s.toFeedItems(videos, "", ""), nil
 }
 
 // categoryFeed 并发请求各栏目的第一页，合并成一个大切片后洗牌。
 // 每条视频都带上栏目 ID 与栏目名，前端按栏目合成合集。
 func (s *DrpySource) categoryFeed(ctx context.Context) ([]FeedItem, error) {
+	return s.FeedCategories(ctx, s.categories)
+}
+
+// FeedCategories 拉取指定栏目的第一页并合并洗牌；ids 为空时用源返回的第一个栏目。
+// 多数据源模式下，栏目范围由每个源自己的配置决定。
+func (s *DrpySource) FeedCategories(ctx context.Context, ids []string) ([]FeedItem, error) {
 	cats, err := s.Categories(ctx)
-	if err != nil && len(s.categories) == 0 {
+	if err != nil && len(ids) == 0 {
 		return nil, err
 	}
 	if err != nil {
@@ -117,7 +128,6 @@ func (s *DrpySource) categoryFeed(ctx context.Context) ([]FeedItem, error) {
 		names[c.ID] = c.Name
 	}
 
-	ids := s.categories
 	if len(ids) == 0 {
 		if len(cats) == 0 {
 			return nil, errors.New("源没有可用的栏目")
@@ -133,6 +143,10 @@ func (s *DrpySource) categoryFeed(ctx context.Context) ([]FeedItem, error) {
 	results := make(chan result, len(ids))
 	var wg sync.WaitGroup
 	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
@@ -141,7 +155,7 @@ func (s *DrpySource) categoryFeed(ctx context.Context) ([]FeedItem, error) {
 				results <- result{id: id, err: err}
 				return
 			}
-			results <- result{id: id, items: toFeedItems(videos, id, names[id])}
+			results <- result{id: id, items: s.toFeedItems(videos, id, names[id])}
 		}(id)
 	}
 	go func() {
@@ -196,19 +210,25 @@ func (s *DrpySource) AllFeedItems(ctx context.Context, categoryID string) ([]Fee
 			}
 		}
 	}
-	return toFeedItems(videos, categoryID, name), nil
+	return s.toFeedItems(videos, categoryID, name), nil
 }
 
 // toFeedItems 把 drpy 视频映射成通用 Feed 条目，并带上所属栏目。
-func toFeedItems(videos []DrpyVideo, categoryID, categoryName string) []FeedItem {
+// 配了 sourceID 时路径会带源 ID，播放接口据此找到对应源实例。
+func (s *DrpySource) toFeedItems(videos []DrpyVideo, categoryID, categoryName string) []FeedItem {
 	items := make([]FeedItem, 0, len(videos))
 	for _, v := range videos {
+		itemPath := DrpyItemPath(v.VodID)
+		if s.sourceID != "" {
+			itemPath = OnlineItemPath(s.sourceID, v.VodID)
+		}
 		items = append(items, FeedItem{
 			Name:       v.VodName,
-			Path:       DrpyItemPath(v.VodID),
+			Path:       itemPath,
 			CoverURL:   v.VodPic,
 			CategoryID: categoryID,
 			Category:   categoryName,
+			SourceID:   s.sourceID,
 		})
 	}
 	return items

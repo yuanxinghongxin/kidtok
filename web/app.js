@@ -123,18 +123,9 @@ const cfgUsername = document.getElementById('cfg-username');
 const cfgPassword = document.getElementById('cfg-password');
 const cfgVideoPath = document.getElementById('cfg-video-path');
 const cfgEye = document.getElementById('cfg-eye');
-const cfgPrimaryInputs = document.querySelectorAll('input[name="primary_source"]');
-const cfgAlistSection = document.getElementById('cfg-alist-section');
-const cfgDrpySection = document.getElementById('cfg-drpy-section');
-const cfgAlistBadge = document.getElementById('cfg-alist-badge');
-const cfgDrpyBadge = document.getElementById('cfg-drpy-badge');
-const cfgCategoriesSection = document.getElementById('cfg-categories-section');
-const cfgCategoriesEl = document.getElementById('cfg-categories');
-const cfgDrpyUrl = document.getElementById('cfg-drpy-url');
-const cfgDrpyName = document.getElementById('cfg-drpy-name');
-const cfgDrpyPwd = document.getElementById('cfg-drpy-pwd');
-const cfgDrpyEye = document.getElementById('cfg-drpy-eye');
-const cfgDrpyKeyword = document.getElementById('cfg-drpy-keyword');
+const cfgAlistToggle = document.getElementById('cfg-alist-toggle');
+const cfgSourcesEl = document.getElementById('cfg-sources');
+const cfgAddSource = document.getElementById('cfg-add-source');
 const cfgSave = document.getElementById('cfg-save');
 const cfgError = document.getElementById('cfg-error');
 const toastEl = document.getElementById('toast');
@@ -1796,14 +1787,14 @@ function showSheet() {
 // 失败时不缓存，下次打开面板可以重试。
 const categoryAllCache = new Map();
 
-function loadCategoryAll(categoryId) {
-  if (!categoryAllCache.has(categoryId)) {
-    categoryAllCache.set(
-      categoryId,
-      api('/api/feed/all?category_id=' + encodeURIComponent(categoryId))
-    );
+function loadCategoryAll(categoryId, sourceId) {
+  const key = (sourceId || '') + ':' + categoryId;
+  if (!categoryAllCache.has(key)) {
+    let url = '/api/feed/all?category_id=' + encodeURIComponent(categoryId);
+    if (sourceId) url += '&source_id=' + encodeURIComponent(sourceId);
+    categoryAllCache.set(key, api(url));
   }
-  return categoryAllCache.get(categoryId);
+  return categoryAllCache.get(key);
 }
 
 function openSheet(slide) {
@@ -1831,12 +1822,12 @@ async function openCategorySheet(col, current) {
   showSheet();
 
   try {
-    const items = await loadCategoryAll(col.categoryId);
+    const items = await loadCategoryAll(col.categoryId, col.sourceId);
     col.totalCount = items.length;
     renderCategoryGrid(col, items, current);
     requestAnimationFrame(scrollToCurrentEpisode);
   } catch (err) {
-    categoryAllCache.delete(col.categoryId);
+    categoryAllCache.delete((col.sourceId || '') + ':' + col.categoryId);
     // 拉全失败时退回首页已载入的那一页，至少还能选集
     renderPlaylist(col, current);
     const note = document.createElement('div');
@@ -2258,40 +2249,416 @@ function hideConfigError() {
   cfgError.hidden = true;
 }
 
-// 当前选中的默认数据源（alist / drpy）
-let loadedPrimarySource = 'alist';
-// 已保存的栏目 ID：设置页打开时用来给复选框打勾
-let loadedCategoryIds = [];
+// ---------- 数据源配置 ----------
+// 在线源草稿：已保存的源 + 刚点「添加数据源」还没保存的源，都放在同一个数组里；
+// 输入时就同步回对象，保存时不需要再逐个读 DOM。
+let sourceSeq = 0;
+const sourceDrafts = [];
 
-function selectedPrimarySource() {
-  const checked = [...cfgPrimaryInputs].find((input) => input.checked);
-  return checked ? checked.value : 'alist';
+function nextSourceUID() {
+  sourceSeq += 1;
+  return 'src-' + sourceSeq;
 }
 
-function setPrimarySource(value) {
-  cfgPrimaryInputs.forEach((input) => {
-    input.checked = input.value === value;
+function newSourceDraft(data) {
+  const d = data || {};
+  return {
+    uid: nextSourceUID(),
+    id: String(d.id || ''),
+    kind: d.kind === 'js' ? 'js' : 'drpy',
+    name: String(d.name || d.source_name || ''),
+    enabled: d.enabled !== false,
+    categories: Array.isArray(d.categories) ? d.categories.map(String) : [],
+    base_url: String(d.base_url || ''),
+    source_name: String(d.source_name || ''),
+    pwd: String(d.pwd || ''),
+    script: String(d.script || ''),
+    script_name: String(d.script_name || ''),
+    catOptions: [],
+    status: '',
+    statusKind: '',
+    testing: false,
+    autoTimer: 0,
+    catsLoaded: false,
+  };
+}
+
+function normalizeCategories(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((cat) => ({
+      id: String((cat && cat.id) !== undefined ? cat.id : ''),
+      name: String((cat && cat.name) || (cat && cat.id) || ''),
+    }))
+    .filter((cat) => cat.id);
+}
+
+function isAlistEnabled() {
+  return cfgAlistToggle.getAttribute('aria-pressed') !== 'false';
+}
+
+function setAlistEnabled(value) {
+  cfgAlistToggle.classList.toggle('on', value);
+  cfgAlistToggle.setAttribute('aria-pressed', value ? 'true' : 'false');
+}
+
+// 只更新这一张卡片的状态文字，不整卡重绘，避免打断用户正在输入的内容
+function sourceStatus(src, text, kind) {
+  src.status = text;
+  src.statusKind = kind || '';
+  const card = cfgSourcesEl.querySelector('[data-uid="' + src.uid + '"]');
+  if (!card) return;
+  const el = card.querySelector('[data-role="status"]');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'cfg-source-status' + (kind ? ' ' + kind : '');
+}
+
+function collectSourceInputs(src, card) {
+  const q = (role) => card.querySelector('[data-role="' + role + '"]');
+  const name = q('name');
+  if (name) src.name = name.value;
+  if (src.kind === 'drpy') {
+    const base = q('base_url');
+    if (base) src.base_url = base.value;
+    const sourceName = q('source_name');
+    if (sourceName) src.source_name = sourceName.value;
+    const pwd = q('pwd');
+    if (pwd) src.pwd = pwd.value;
+  } else {
+    const script = q('script');
+    if (script) src.script = script.value;
+  }
+}
+
+function sourcePayload(src) {
+  return {
+    id: src.id,
+    kind: src.kind,
+    name: src.name.trim(),
+    enabled: src.enabled,
+    categories: src.categories,
+    base_url: src.base_url.trim(),
+    source_name: src.source_name.trim(),
+    pwd: src.pwd.trim(),
+    script: src.script,
+    script_name: src.script_name,
+  };
+}
+
+function renderSources() {
+  cfgSourcesEl.innerHTML = '';
+  if (!sourceDrafts.length) {
+    const empty = document.createElement('div');
+    empty.className = 'cfg-sources-empty';
+    empty.textContent = '还没有在线数据源，点下面的「添加数据源」开始。';
+    cfgSourcesEl.appendChild(empty);
+    return;
+  }
+  sourceDrafts.forEach(renderSourceCard);
+}
+
+function renderSourceCard(src) {
+  const card = document.createElement('div');
+  card.className = 'cfg-source-card';
+  card.dataset.uid = src.uid;
+  cfgSourcesEl.appendChild(card);
+
+  const head = document.createElement('div');
+  head.className = 'cfg-source-head';
+  head.innerHTML = [
+    '<span class="cfg-source-kind">' + (src.kind === 'js' ? 'JS 规则' : 'drpy-node') + '</span>',
+    '<button class="switch" type="button" data-role="enabled" aria-label="启用这个数据源"><span class="switch-knob"></span></button>',
+    '<button class="cfg-source-del" type="button" data-role="del">删除</button>',
+  ].join('');
+
+  const nameField = document.createElement('label');
+  nameField.className = 'cfg-field';
+  nameField.innerHTML =
+    '<span class="cfg-label">名称</span><span class="cfg-control">' +
+    '<input class="cfg-input" data-role="name" type="text" placeholder="例如 兔小贝" spellcheck="false"></span>';
+
+  const kindRow = document.createElement('div');
+  kindRow.className = 'cfg-kind-row';
+  kindRow.innerHTML = [
+    '<div class="cfg-segment">',
+    '<label class="cfg-segment-item"><input type="radio" data-role="kind" value="drpy"><span>drpy-node</span></label>',
+    '<label class="cfg-segment-item"><input type="radio" data-role="kind" value="js"><span>JS 规则文件</span></label>',
+    '</div>',
+  ].join('');
+
+  const drpyGroup = document.createElement('div');
+  drpyGroup.className = 'cfg-group';
+  drpyGroup.dataset.role = 'drpy-fields';
+  drpyGroup.innerHTML = [
+    '<label class="cfg-field"><span class="cfg-label">服务端</span><span class="cfg-control">',
+    '<input class="cfg-input" data-role="base_url" type="text" placeholder="http://192.168.0.201:5757" spellcheck="false"></span></label>',
+    '<label class="cfg-field"><span class="cfg-label">源名称</span><span class="cfg-control">',
+    '<input class="cfg-input" data-role="source_name" type="text" placeholder="兔小贝[儿]" spellcheck="false"></span></label>',
+    '<label class="cfg-field"><span class="cfg-label">API 密码</span><span class="cfg-control">',
+    '<input class="cfg-input" data-role="pwd" type="password" placeholder="dzyyds"></span></label>',
+  ].join('');
+
+  const jsGroup = document.createElement('div');
+  jsGroup.className = 'cfg-js-group';
+  jsGroup.dataset.role = 'js-fields';
+  jsGroup.innerHTML = [
+    '<div class="cfg-js-file">',
+    '<button class="cfg-upload-btn" type="button" data-role="upload">选择 JS 文件</button>',
+    '<span class="cfg-js-file-name" data-role="filename">未选择文件</span>',
+    '<input type="file" accept=".js,.txt" data-role="file" hidden>',
+    '</div>',
+    '<textarea class="cfg-script" data-role="script" rows="7" spellcheck="false" ',
+    'placeholder="也可以直接把 drpy 规则文件的内容粘贴到这里"></textarea>',
+  ].join('');
+
+  const actions = document.createElement('div');
+  actions.className = 'cfg-source-actions';
+  actions.innerHTML = [
+    '<button class="cfg-test-btn" type="button" data-role="test">检测分类</button>',
+    '<span class="cfg-source-status" data-role="status"></span>',
+  ].join('');
+
+  const cats = document.createElement('div');
+  cats.className = 'cfg-cats';
+  cats.dataset.role = 'cats';
+
+  card.append(head, nameField, kindRow, drpyGroup, jsGroup, actions, cats);
+
+  const nameInput = card.querySelector('[data-role="name"]');
+  nameInput.value = src.name;
+  nameInput.addEventListener('input', () => {
+    src.name = nameInput.value;
+  });
+
+  const enabledBtn = card.querySelector('[data-role="enabled"]');
+  enabledBtn.classList.toggle('on', src.enabled);
+  enabledBtn.setAttribute('aria-pressed', src.enabled ? 'true' : 'false');
+  enabledBtn.addEventListener('click', () => {
+    src.enabled = !src.enabled;
+    enabledBtn.classList.toggle('on', src.enabled);
+    enabledBtn.setAttribute('aria-pressed', src.enabled ? 'true' : 'false');
+  });
+
+  card.querySelector('[data-role="del"]').addEventListener('click', () => {
+    clearTimeout(src.autoTimer);
+    const index = sourceDrafts.indexOf(src);
+    if (index >= 0) sourceDrafts.splice(index, 1);
+    renderSources();
+  });
+
+  card.querySelectorAll('[data-role="kind"]').forEach((input) => {
+    input.checked = input.value === src.kind;
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      collectSourceInputs(src, card);
+      src.kind = input.value === 'js' ? 'js' : 'drpy';
+      // 换类型后旧的分类不再适用，等重新检测
+      src.catOptions = [];
+      src.categories = [];
+      src.status = '';
+      src.statusKind = '';
+      renderSources();
+    });
+  });
+
+  const drpyFields = card.querySelector('[data-role="drpy-fields"]');
+  const jsFields = card.querySelector('[data-role="js-fields"]');
+  drpyFields.style.display = src.kind === 'drpy' ? '' : 'none';
+  jsFields.style.display = src.kind === 'js' ? '' : 'none';
+
+  if (src.kind === 'drpy') {
+    const baseInput = card.querySelector('[data-role="base_url"]');
+    baseInput.value = src.base_url;
+    baseInput.addEventListener('input', () => {
+      src.base_url = baseInput.value;
+    });
+    baseInput.addEventListener('change', () => scheduleAutoTest(src));
+    const sourceNameInput = card.querySelector('[data-role="source_name"]');
+    sourceNameInput.value = src.source_name;
+    sourceNameInput.addEventListener('input', () => {
+      src.source_name = sourceNameInput.value;
+    });
+    sourceNameInput.addEventListener('change', () => scheduleAutoTest(src));
+    const pwdInput = card.querySelector('[data-role="pwd"]');
+    pwdInput.value = src.pwd;
+    pwdInput.addEventListener('input', () => {
+      src.pwd = pwdInput.value;
+    });
+    pwdInput.addEventListener('change', () => scheduleAutoTest(src));
+  } else {
+    const scriptInput = card.querySelector('[data-role="script"]');
+    scriptInput.value = src.script;
+    scriptInput.addEventListener('input', () => {
+      src.script = scriptInput.value;
+    });
+    // 粘贴/输入结束（textarea 失焦）时自动检测，不用再点按钮
+    scriptInput.addEventListener('change', () => scheduleAutoTest(src));
+
+    const filename = card.querySelector('[data-role="filename"]');
+    filename.textContent = src.script_name || '未选择文件';
+
+    const fileInput = card.querySelector('[data-role="file"]');
+    card.querySelector('[data-role="upload"]').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        src.script = String(reader.result || '');
+        src.script_name = file.name;
+        scriptInput.value = src.script;
+        filename.textContent = file.name;
+        scheduleAutoTest(src);
+      };
+      reader.onerror = () => sourceStatus(src, '读取文件失败，请重试', 'error');
+      reader.readAsText(file);
+    });
+  }
+
+  card.querySelector('[data-role="test"]').addEventListener('click', () => {
+    // 手动点按钮时取消待触发的自动检测，避免重复请求
+    clearTimeout(src.autoTimer);
+    testSourceDraft(src, card);
+  });
+
+  const statusEl = card.querySelector('[data-role="status"]');
+  statusEl.textContent = src.status;
+  statusEl.className = 'cfg-source-status' + (src.statusKind ? ' ' + src.statusKind : '');
+
+  renderSourceCats(card, src);
+}
+
+function renderSourceCats(card, src) {
+  const box = card.querySelector('[data-role="cats"]');
+  if (!box) return;
+  box.innerHTML = '';
+
+  if (!src.catOptions.length) {
+    const hint = document.createElement('span');
+    hint.className = 'cfg-cats-hint';
+    if (!src.statusKind && src.id && !src.catsLoaded) {
+      hint.textContent = '正在加载分类…';
+    } else if (src.statusKind === 'error') {
+      hint.textContent = '连接失败，暂时没有分类';
+    } else {
+      hint.textContent = '填完连接信息会自动检测，也可以点「检测分类」';
+    }
+    box.appendChild(hint);
+    return;
+  }
+
+  src.catOptions.forEach((cat) => {
+    const label = document.createElement('label');
+    label.className = 'cfg-cat';
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = cat.id;
+    input.checked = src.categories.includes(cat.id);
+    input.addEventListener('change', () => {
+      if (input.checked) {
+        if (!src.categories.includes(cat.id)) src.categories.push(cat.id);
+      } else {
+        src.categories = src.categories.filter((id) => id !== cat.id);
+      }
+    });
+
+    const text = document.createElement('span');
+    text.textContent = cat.name;
+
+    label.append(input, text);
+    box.appendChild(label);
   });
 }
 
-// 默认源对应的高亮徽标；另一块整体压暗，但仍然可以编辑备用源
-function syncPrimaryUI() {
-  const primary = selectedPrimarySource();
-  cfgAlistSection.classList.toggle('off', primary !== 'alist');
-  cfgDrpySection.classList.toggle('off', primary !== 'drpy');
-  cfgCategoriesSection.classList.toggle('off', primary !== 'drpy');
-  cfgAlistBadge.hidden = primary !== 'alist';
-  cfgDrpyBadge.hidden = primary !== 'drpy';
+async function postJSON(path, payload) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json();
+  if (body.code !== 0) throw new Error(body.msg || '请求失败');
+  return body.data;
+}
+
+// 填完一项连接信息后自动检测：轻量防抖，避免边输入边请求上游。
+// 必填项不完整时什么都不做，等用户填完最后一项再触发。
+function scheduleAutoTest(src) {
+  clearTimeout(src.autoTimer);
+  src.autoTimer = setTimeout(() => {
+    if (src.testing) return;
+    if (src.kind === 'drpy' && (!src.base_url.trim() || !src.source_name.trim())) return;
+    if (src.kind === 'js' && src.script.trim().length < 10) return;
+    testSourceDraft(src, cfgSourcesEl.querySelector('[data-uid="' + src.uid + '"]'));
+  }, 600);
+}
+
+// 用还没保存的表单内容连接一次，成功返回这个源自己的分类
+async function testSourceDraft(src, card) {
+  if (!card || src.testing) return;
+  collectSourceInputs(src, card);
+
+  if (src.kind === 'drpy' && (!src.base_url.trim() || !src.source_name.trim())) {
+    sourceStatus(src, '请先填写服务端地址和源名称', 'error');
+    return;
+  }
+  if (src.kind === 'js' && !src.script.trim()) {
+    sourceStatus(src, '请先粘贴或上传 JS 规则文件', 'error');
+    return;
+  }
+
+  src.testing = true;
+  const btn = card.querySelector('[data-role="test"]');
+  btn.disabled = true;
+  btn.textContent = '检测中…';
+  sourceStatus(src, '正在连接…', '');
+
+  try {
+    const cats = normalizeCategories(await postJSON('/api/source/test', sourcePayload(src)));
+    src.catOptions = cats;
+    // 只保留这次检测里仍然存在的勾选，避免把已经不存在的栏目 ID 存下去
+    src.categories = src.categories.filter((id) => cats.some((cat) => cat.id === id));
+    sourceStatus(
+      src,
+      cats.length ? '连接成功，共 ' + cats.length + ' 个分类' : '连接成功，但这个源没有返回分类',
+      'ok'
+    );
+  } catch (err) {
+    src.catOptions = [];
+    // 保留已勾选的栏目 ID：配置改对后重新检测，勾选会自动恢复
+    sourceStatus(src, err.message || '连接失败', 'error');
+  } finally {
+    src.testing = false;
+    src.catsLoaded = true;
+    btn.disabled = false;
+    btn.textContent = '检测分类';
+  }
+
+  const live = cfgSourcesEl.querySelector('[data-uid="' + src.uid + '"]');
+  if (live) renderSourceCats(live, src);
+}
+
+// 已保存的源：打开配置页时后台拉一次分类，让栏目名直接显示出来
+async function loadSavedCategories(src) {
+  try {
+    const cats = normalizeCategories(await api('/api/categories?source_id=' + encodeURIComponent(src.id)));
+    src.catOptions = cats;
+    // 分类加载成功但不打断已有勾选：已保存 ID 不在列表里时保留，保存后仍然生效
+    sourceStatus(src, '已加载 ' + cats.length + ' 个分类', '');
+  } catch (err) {
+    src.catOptions = [];
+    sourceStatus(src, '分类加载失败：' + err.message, 'error');
+  }
+  src.catsLoaded = true;
+  const card = cfgSourcesEl.querySelector('[data-uid="' + src.uid + '"]');
+  if (card) renderSourceCats(card, src);
 }
 
 // 当前配置回显到表单；兼容旧版扁平结构（protocol/host 直接在顶层）
 function applyConfigForm(data) {
   const alist = data.alist || data || {};
-  const drpy = data.drpy || {};
-  const primary = String(data.primary_source || 'alist').toLowerCase();
-
-  loadedPrimarySource = primary === 'drpy' ? 'drpy' : 'alist';
-  setPrimarySource(loadedPrimarySource);
 
   cfgProtocol.value = String(alist.protocol || '').toLowerCase() === 'https' ? 'https' : 'http';
   cfgAddress.value = alist.host || '';
@@ -2299,40 +2666,36 @@ function applyConfigForm(data) {
   cfgUsername.value = alist.username || '';
   cfgPassword.value = alist.password || '';
   cfgVideoPath.value = alist.base_path || '';
-
-  cfgDrpyUrl.value = drpy.base_url || '';
-  cfgDrpyName.value = drpy.name || '';
-  cfgDrpyPwd.value = drpy.pwd || '';
-  cfgDrpyKeyword.value = drpy.keyword || '';
-
-  loadedCategoryIds = Array.isArray(data.enabled_categories)
-    ? data.enabled_categories.map(String)
-    : [];
+  setAlistEnabled(!alist.disabled);
 
   cfgPassword.type = 'password';
   cfgEye.innerHTML = ICONS.eyeOff;
   cfgEye.setAttribute('aria-label', '显示密码');
-  cfgDrpyPwd.type = 'password';
-  cfgDrpyEye.innerHTML = ICONS.eyeOff;
-  cfgDrpyEye.setAttribute('aria-label', '显示密码');
 
-  syncPrimaryUI();
+  sourceDrafts.length = 0;
+  const list = Array.isArray(data.sources) ? data.sources : [];
+  list.forEach((raw) => sourceDrafts.push(newSourceDraft(raw)));
+  renderSources();
+
+  // 已保存且启用的源：打开页面就能看到自己的分类，不用重新点检测
+  sourceDrafts.forEach((src) => {
+    if (src.id && src.enabled) loadSavedCategories(src);
+  });
 }
 
 // 设置页「服务器配置」右侧的小字：优先展示当前默认源
+// 设置抽屉「数据源配置」右侧的小字：在线源数量 + 网盘是否参与
 function setServerSummary(settings) {
   if (!settings) {
     serverSub.textContent = '未配置';
     return;
   }
-  if (String(settings.primary_source || '').toLowerCase() === 'drpy' && settings.drpy && settings.drpy.base_url) {
-    serverSub.textContent = 'Drpy · ' + settings.drpy.base_url;
-    return;
-  }
+  const sources = (Array.isArray(settings.sources) ? settings.sources : []).filter((s) => s.enabled);
   const alist = settings.alist || settings;
-  serverSub.textContent = alist.host
-    ? 'AList · ' + (alist.protocol || 'http') + '://' + alist.host + ':' + alist.port
-    : '未配置';
+  const parts = [];
+  if (sources.length) parts.push('在线源 × ' + sources.length);
+  if (alist.host && !alist.disabled) parts.push('网盘');
+  serverSub.textContent = parts.length ? parts.join(' · ') : '未配置';
 }
 
 // 「我的」右上角齿轮 → 设置抽屉，从屏幕右侧滑入（半屏宽 + 毛玻璃）
@@ -2356,60 +2719,18 @@ function closeDrawer() {
   }, 300);
 }
 
-// 「设置」→「服务器配置」，逐级返回
+// 「设置」→「数据源配置」，逐级返回
 async function openConfigPage() {
   hideConfigError();
   closeDrawer();
   pageConfig.hidden = false;
   configOpen = true;
   try {
+    // 已保存源的分区在 applyConfigForm 里异步加载，不阻塞页面打开
     applyConfigForm(await api('/api/config'));
   } catch (err) {
     showConfigError('读取当前配置失败：' + err.message);
   }
-  // 栏目列表来自在线源，等它渲染完再允许保存，避免保存时把已勾选的栏目清空
-  await loadCategories();
-}
-
-// 设置页「播放内容来源」：拉取当前源的全部栏目，并按已保存的配置打勾
-async function loadCategories() {
-  cfgCategoriesEl.innerHTML = '';
-  const hint = document.createElement('span');
-  hint.className = 'cfg-cats-hint';
-  hint.textContent = '加载中…';
-  cfgCategoriesEl.appendChild(hint);
-
-  let categories;
-  try {
-    categories = await api('/api/categories');
-  } catch (err) {
-    hint.textContent = '获取栏目失败：' + err.message + '（先填写并保存 Drpy 配置后重试）';
-    return;
-  }
-
-  if (!Array.isArray(categories) || categories.length === 0) {
-    hint.textContent = '这个源没有返回任何栏目';
-    return;
-  }
-
-  cfgCategoriesEl.innerHTML = '';
-  categories.forEach((cat) => {
-    const id = String(cat.id);
-    const label = document.createElement('label');
-    label.className = 'cfg-cat';
-
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.name = 'enabled_category';
-    input.value = id;
-    input.checked = loadedCategoryIds.includes(id);
-
-    const text = document.createElement('span');
-    text.textContent = String(cat.name || id);
-
-    label.append(input, text);
-    cfgCategoriesEl.appendChild(label);
-  });
 }
 
 function closeConfigPage() {
@@ -2442,88 +2763,77 @@ function bindPasswordEye(button, input) {
 }
 
 bindPasswordEye(cfgEye, cfgPassword);
-bindPasswordEye(cfgDrpyEye, cfgDrpyPwd);
 
-// 切换默认源时立刻高亮对应配置区
-cfgPrimaryInputs.forEach((input) => input.addEventListener('change', syncPrimaryUI));
+// 网盘开关：关掉后网盘不参与首页混排，在线源不受影响
+cfgAlistToggle.addEventListener('click', () => setAlistEnabled(!isAlistEnabled()));
+
+// 添加一个空白在线源，填完信息点「检测分类」就会列出它自己的分类
+cfgAddSource.addEventListener('click', () => {
+  sourceDrafts.push(newSourceDraft({}));
+  renderSources();
+  const last = cfgSourcesEl.lastElementChild;
+  if (last) last.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
 
 cfgForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   hideConfigError();
 
-  const primary = selectedPrimarySource();
-  const payload = {
-    primary_source: primary,
-    // 勾选的栏目 ID；一个都没勾时后端默认用源里的第一个栏目
-    enabled_categories: [...cfgCategoriesEl.querySelectorAll('input[name="enabled_category"]:checked')]
-      .map((input) => input.value),
-    alist: {
-      protocol: cfgProtocol.value,
-      host: cfgAddress.value.trim(),
-      port: cfgPort.value.trim(),
-      username: cfgUsername.value.trim(),
-      password: cfgPassword.value,
-      base_path: cfgVideoPath.value.trim(),
-    },
-    drpy: {
-      base_url: cfgDrpyUrl.value.trim(),
-      name: cfgDrpyName.value.trim(),
-      pwd: cfgDrpyPwd.value.trim(),
-      keyword: cfgDrpyKeyword.value.trim(),
-    },
-  };
+  // 保存前从 DOM 同步一遍，防止浏览器自动填充等没有触发 input 的情况
+  sourceDrafts.forEach((src) => {
+    const card = cfgSourcesEl.querySelector('[data-uid="' + src.uid + '"]');
+    if (card) collectSourceInputs(src, card);
+  });
 
-  // 只校验「当前默认源」的必填项；备用源没填也能保存，之后随时切过去
-  if (primary === 'alist') {
-    if (!payload.alist.host) {
-      showConfigError('选择本地网盘作为默认数据源时，请填写服务器地址');
-      return;
-    }
-    if (payload.alist.port && !/^\d+$/.test(payload.alist.port)) {
-      showConfigError('端口必须是数字');
-      return;
-    }
-    if (!payload.alist.port) {
-      showConfigError('请填写网盘端口');
-      return;
-    }
-  } else {
-    if (!payload.drpy.base_url) {
-      showConfigError('选择在线解析作为默认数据源时，请填写 Drpy 服务端地址');
-      return;
-    }
-    if (!/^https?:\/\//i.test(payload.drpy.base_url)) {
-      showConfigError('Drpy 服务端地址需要以 http:// 或 https:// 开头');
-      return;
-    }
-    if (!payload.drpy.name) {
-      showConfigError('请填写 Drpy 源名称');
+  // 网盘：填了地址就必须有合法端口；完全不填则允许保存（只用在在线源）
+  const alistHost = cfgAddress.value.trim();
+  const alistPort = cfgPort.value.trim();
+  if (alistHost) {
+    if (!alistPort || !/^\d+$/.test(alistPort)) {
+      showConfigError('填写了网盘地址时，请填写数字端口');
       return;
     }
   }
 
+  // 启用的源必须配置完整；没启用的源允许先存着，之后随时打开
+  for (const src of sourceDrafts) {
+    if (!src.enabled) continue;
+    const label = src.name.trim() || '未命名数据源';
+    if (src.kind === 'drpy' && !src.base_url.trim()) {
+      showConfigError('数据源「' + label + '」还没有填写服务端地址');
+      return;
+    }
+    if (src.kind === 'drpy' && !src.source_name.trim()) {
+      showConfigError('数据源「' + label + '」还没有填写源名称');
+      return;
+    }
+    if (src.kind === 'js' && !src.script.trim()) {
+      showConfigError('数据源「' + label + '」还没有上传或粘贴 JS 规则文件');
+      return;
+    }
+  }
+
+  const payload = {
+    alist: {
+      protocol: cfgProtocol.value,
+      host: alistHost,
+      port: alistPort,
+      username: cfgUsername.value.trim(),
+      password: cfgPassword.value,
+      base_path: cfgVideoPath.value.trim(),
+      disabled: !isAlistEnabled(),
+    },
+    sources: sourceDrafts.map(sourcePayload),
+  };
+
   cfgSave.disabled = true;
   cfgSave.textContent = '保存中…';
   try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const body = await res.json();
-    if (body.code !== 0) {
-      throw new Error(body.msg || '保存失败');
-    }
-
-    setServerSummary(body.data || payload);
-    // 默认源变了：后端已按新配置取源，前端重新加载一次 Feed 让内容真正换过来
-    if (primary !== loadedPrimarySource) {
-      showToast('配置已保存，数据源已切换生效！');
-      setTimeout(() => location.reload(), 900);
-      return;
-    }
-    showToast('保存成功');
-    setTimeout(closeConfigPage, 700);
+    const data = await postJSON('/api/config', payload);
+    setServerSummary(data || payload);
+    // 数据源变化后要重新拉一次首页，最简单可靠的方式是整页重载
+    showToast('保存成功，首页已按新数据源生效');
+    setTimeout(() => location.reload(), 900);
   } catch (err) {
     showConfigError(err.message || '保存失败');
   } finally {
@@ -2627,9 +2937,9 @@ function buildEpisodes(items, collectionId) {
     return { item, season: seasonOfDir(dirPath) };
   });
 
-  // 在线源的 path 是「drpy:栏目$ID@@名称@@封面URL」，里面混着封面地址的 /，
+  // 在线源的 path 是「src:源ID:条目ID」，里面混着封面地址的 /，
   // 不能按季/文件名排序，保持栏目接口返回的顺序即可（就是最新更新的顺序）。
-  const online = items.some((item) => item.category_id || item.category);
+  const online = items.some((item) => item.source_id || item.category_id);
   if (!online) {
     entries.sort((a, b) => {
       const ao = a.season ? a.season.order : Number.MAX_SAFE_INTEGER;
@@ -2698,13 +3008,14 @@ async function boot() {
     // 但文件夹名是「第 1 季」这类分季目录时，合集往上取一层，同一部的各季合并。
     const groups = new Map();
     data.forEach((item) => {
-      // 在线源按栏目合成合集（儿歌 / 故事 / 国学…），点开合集就只看这个栏目
-      if (item.category_id || item.category) {
-        const key = 'cat:' + (item.category_id || item.category);
+      // 在线源按「源 + 栏目」合成合集，避免兔小贝和贝乐虎的同名栏目串在一起
+      if (item.source_id || item.category_id) {
+        const key = 'cat:' + (item.source_id || '') + ':' + (item.category_id || item.category);
         if (!groups.has(key)) {
           groups.set(key, {
             name: item.category || '在线内容',
-            // 记住栏目 ID：合集面板要按它去拉该栏目的全部视频
+            // 记住源 ID + 栏目 ID：合集面板要按它去拉该栏目的全部视频
+            sourceId: item.source_id || '',
             categoryId: item.category_id || '',
             items: [],
           });
@@ -2728,6 +3039,7 @@ async function boot() {
         name: group.name,
         // 在线栏目才有 categoryId；网盘合集为空，面板仍按已载入的集数展示
         categoryId: group.categoryId || '',
+        sourceId: group.sourceId || '',
         episodes: [],
       };
       // 同一部的各季合并成一个合集：按季排好序，并给每集标上所属季与季内序号

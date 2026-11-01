@@ -50,17 +50,22 @@ func run() error {
 
 	alistProvider := source.NewAlistProvider(store.GetAlist, cfg.Alist.Timeout)
 	if !store.GetAlist().Configured() {
-		slog.Warn("网盘未配置，可在前端「我的 → 服务器配置」里填写", "config", configJSON)
+		slog.Warn("网盘未配置，可在前端「我的 → 数据源配置」里填写", "config", configJSON)
 	}
 
-	// 所有数据源都实现 VideoProvider：默认源随 primary_source 实时切换，drpy 参数改了会重建实例。
+	// 所有数据源都实现 VideoProvider：在线源（drpy / 上传的 JS 规则）按 config.json 的
+	// sources 实时解析，勾选栏目后首页一起随机混排；参数改了会自动重建实例。
 	sources := source.NewSources(store.Get, alistProvider, cfg.Source.Drpy.Timeout, map[string]source.VideoProvider{
 		"tuxiaobei": source.NewTuxiaobeiSource("", cfg.Alist.Timeout),
 	})
-	if d := store.Get().Drpy; d.Configured() {
-		slog.Info("已启用 drpy 数据源", "base_url", d.BaseURL, "source", d.Name, "keyword", d.Keyword)
+	enabled := 0
+	for _, s := range store.Get().Sources {
+		if s.Enabled && s.Configured() {
+			enabled++
+			slog.Info("已启用数据源", "id", s.ID, "kind", s.Kind, "name", s.Name, "categories", len(s.Categories))
+		}
 	}
-	slog.Info("Feed 默认数据源", "source", store.Get().PrimarySource)
+	slog.Info("数据源统计", "total", len(store.Get().Sources), "enabled", enabled, "alist", store.GetAlist().BaseURL())
 
 	webFS, err := fs.Sub(web.Files, ".")
 	if err != nil {

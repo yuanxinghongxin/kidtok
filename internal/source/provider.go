@@ -6,19 +6,40 @@ import (
 	"strings"
 )
 
-// DrpyPathPrefix 是 drpy 条目在 FeedItem.Path 里的前缀。
-//
-// 前端只把 path 拼进 /api/video/stream?path=...，不认识数据源，
-// 所以用前缀来区分「这个 path 属于 drpy 源、而不是网盘文件路径」，
-// 这样接新数据源不需要改前端。
+// DrpyPathPrefix 是旧版单源 drpy 条目在 FeedItem.Path 里的前缀。
+// 新版多数据源用 OnlinePathPrefix，并把源 ID 也编进路径里。
 const DrpyPathPrefix = "drpy:"
 
-// DrpyItemPath 把 vod_id 包装成 Feed 条目路径。
+// OnlinePathPrefix 是「在线数据源」条目在 FeedItem.Path 里的前缀。
+// 格式：src:<源ID>:<条目键>，例如 src:s1:/play/1404。
+const OnlinePathPrefix = "src:"
+
+// DrpyItemPath 把 vod_id 包装成旧版单源 drpy 路径（保留给旧配置的兼容逻辑）。
 func DrpyItemPath(vodID string) string {
 	return DrpyPathPrefix + strings.TrimSpace(vodID)
 }
 
-// IsDrpyPath 判断一个 Feed 条目路径是否属于 drpy 源。
+// OnlineItemPath 把某个数据源的条目键包装成路径。
+// 源 ID 里只允许字母数字与下划线，因此用第一个冒号切分即可，
+// 后面的冒号都归属条目键（部分源的 vod_id 里带冒号或斜杠）。
+func OnlineItemPath(sourceID, key string) string {
+	return OnlinePathPrefix + sourceID + ":" + strings.TrimSpace(key)
+}
+
+// SplitOnlinePath 拆出源 ID 与条目键；不是在线源路径时 ok 为 false。
+func SplitOnlinePath(itemPath string) (sourceID, key string, ok bool) {
+	if !strings.HasPrefix(itemPath, OnlinePathPrefix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(itemPath, OnlinePathPrefix)
+	idx := strings.Index(rest, ":")
+	if idx < 0 {
+		return rest, "", true
+	}
+	return rest[:idx], rest[idx+1:], true
+}
+
+// IsDrpyPath 判断一个 Feed 条目路径是否属于旧版 drpy 源。
 func IsDrpyPath(itemPath string) bool {
 	return strings.HasPrefix(itemPath, DrpyPathPrefix)
 }
@@ -27,8 +48,8 @@ func IsDrpyPath(itemPath string) bool {
 // 没有前缀的（如 /启蒙/xxx.mp4）一律按网盘文件处理。
 func ProviderOfPath(itemPath string) string {
 	switch {
-	case strings.HasPrefix(itemPath, DrpyPathPrefix):
-		return "drpy"
+	case strings.HasPrefix(itemPath, OnlinePathPrefix), strings.HasPrefix(itemPath, DrpyPathPrefix):
+		return "online"
 	case strings.HasPrefix(itemPath, TuxiaobeiPathPrefix):
 		return "tuxiaobei"
 	default:

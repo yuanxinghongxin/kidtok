@@ -177,7 +177,7 @@
           <button id="server-btn" class="me-row" type="button">
             <span class="me-row-icon"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3.6" y="4.6" width="16.8" height="6" rx="1.8"/><rect x="3.6" y="13.4" width="16.8" height="6" rx="1.8"/><path d="M7 7.6h.01M7 16.4h.01"/></svg></span>
             <span class="me-row-text">
-              <span class="me-row-title">服务器配置</span>
+              <span class="me-row-title">数据源配置</span>
               <span id="server-sub" class="me-row-sub">未配置</span>
             </span>
             <span class="me-row-action">管理<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.6 5.6 6.4 6.4-6.4 6.4"/></svg></span>
@@ -237,37 +237,25 @@
     </aside>
   </div>
 
-  <!-- 服务器配置：全屏表单 -->
+  <!-- 数据源配置：全屏表单 -->
   <main id="page-config" class="page config" hidden>
     <header class="cfg-head">
       <button id="cfg-back" class="cfg-back" type="button" aria-label="返回">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4.8 7.3 12l7.2 7.2"/></svg>
       </button>
-      <h1 class="cfg-title">服务器配置</h1>
+      <h1 class="cfg-title">数据源配置</h1>
     </header>
 
     <form id="cfg-form" class="cfg-form" autocomplete="off">
-      <!-- 默认数据源：决定首页 Feed 从哪个源取内容，保存后立即生效 -->
-      <div class="cfg-source-row">
-        <span class="cfg-source-label">默认数据源</span>
-        <div class="cfg-segment" role="radiogroup" aria-label="默认数据源">
-          <label class="cfg-segment-item">
-            <input type="radio" name="primary_source" value="alist" checked>
-            <span>本地网盘</span>
-          </label>
-          <label class="cfg-segment-item">
-            <input type="radio" name="primary_source" value="drpy">
-            <span>在线解析</span>
-          </label>
-        </div>
-      </div>
-      <p class="cfg-tip">「本地网盘」读取自建 AList；「在线解析」走局域网里的 drpy-node 搜索。保存后立即切换，无需重启容器。</p>
+      <p class="cfg-tip">首页会把所有已启用数据源里勾选的栏目合并后一起随机播放。可以保存多个在线源（兔小贝、贝乐虎…），也可以直接上传或粘贴 drpy 规则 JS 文件，不走 drpy-node。</p>
 
-      <!-- AList 配置 -->
-      <section id="cfg-alist-section" class="cfg-section">
+      <!-- 本地网盘：作为数据源列表里的固定条目，填了路径并启用才参与混排 -->
+      <section class="cfg-section">
         <div class="cfg-section-head">
-          <span class="cfg-section-title">AList 配置</span>
-          <span id="cfg-alist-badge" class="cfg-badge" hidden>当前默认</span>
+          <span class="cfg-section-title">本地网盘 · AList</span>
+          <button id="cfg-alist-toggle" class="switch" type="button" aria-pressed="true" aria-label="网盘是否参与首页混排">
+            <span class="switch-knob"></span>
+          </button>
         </div>
 
         <div class="cfg-group">
@@ -320,60 +308,17 @@
             </span>
           </label>
         </div>
+        <p class="cfg-tip">填了视频路径并打开上面的开关后，网盘内容会作为「本地网盘」栏目参与首页混排。</p>
       </section>
 
-      <!-- Drpy 配置 -->
-      <section id="cfg-drpy-section" class="cfg-section">
+      <!-- 在线数据源：可保存多个，每个源独立检测分类、勾选栏目 -->
+      <section class="cfg-section">
         <div class="cfg-section-head">
-          <span class="cfg-section-title">Drpy 配置</span>
-          <span id="cfg-drpy-badge" class="cfg-badge" hidden>当前默认</span>
+          <span class="cfg-section-title">在线数据源</span>
         </div>
-
-        <div class="cfg-group">
-          <label class="cfg-field">
-            <span class="cfg-label">服务端地址</span>
-            <span class="cfg-control">
-              <input id="cfg-drpy-url" class="cfg-input" name="drpy_base_url" type="text" placeholder="http://192.168.0.201:5757" spellcheck="false" autocapitalize="off">
-            </span>
-          </label>
-
-          <label class="cfg-field">
-            <span class="cfg-label">源名称</span>
-            <span class="cfg-control">
-              <input id="cfg-drpy-name" class="cfg-input" name="drpy_name" type="text" placeholder="兔小贝[儿]" spellcheck="false">
-            </span>
-          </label>
-
-          <label class="cfg-field">
-            <span class="cfg-label">API 密码</span>
-            <span class="cfg-control">
-              <input id="cfg-drpy-pwd" class="cfg-input" name="drpy_pwd" type="password" placeholder="dzyyds">
-              <button id="cfg-drpy-eye" class="cfg-eye" type="button" aria-label="显示密码">
-                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3.8 21 20.2"/><path d="M10.6 6.3A9.7 9.7 0 0 1 12 6.2c4.9 0 8.4 3.1 9.6 5.8a12 12 0 0 1-2.7 3.6"/><path d="M6.2 8.1C4.4 9.5 3.2 11 2.4 12c1.2 2.7 4.7 5.8 9.6 5.8 1.5 0 2.9-.3 4.1-.9"/><path d="M10.1 10.2a2.7 2.7 0 0 0 3.8 3.8"/></svg>
-              </button>
-            </span>
-          </label>
-
-          <label class="cfg-field">
-            <span class="cfg-label">搜索词</span>
-            <span class="cfg-control">
-              <input id="cfg-drpy-keyword" class="cfg-input" name="drpy_keyword" type="text" placeholder="儿歌" spellcheck="false">
-            </span>
-          </label>
-        </div>
-      </section>
-
-      <!-- 播放内容来源：勾选在线源的栏目，首页把它们合并成一条随机混合流 -->
-      <section id="cfg-categories-section" class="cfg-section">
-        <div class="cfg-section-head">
-          <span class="cfg-section-title">播放内容来源</span>
-        </div>
-        <div class="cfg-group cfg-categories-group">
-          <div id="cfg-categories" class="cfg-cats">
-            <span class="cfg-cats-hint">加载中…</span>
-          </div>
-        </div>
-        <p class="cfg-tip">勾选多个栏目后，首页会把它们的视频合并后随机播放；一个都不勾时默认播放第一个栏目。</p>
+        <div id="cfg-sources" class="cfg-sources"></div>
+        <button id="cfg-add-source" class="cfg-add-source" type="button">＋ 添加数据源</button>
+        <p class="cfg-tip">填好连接信息后会自动检测：成功会列出这个源自己的栏目，勾选后保存；连接失败会提示原因。JS 规则支持直接粘贴或上传文件。</p>
       </section>
 
       <p id="cfg-error" class="cfg-error" hidden></p>

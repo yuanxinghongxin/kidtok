@@ -76,35 +76,27 @@ func (h *Handler) AlistPlay(w http.ResponseWriter, r *http.Request) {
 	OK(w, file)
 }
 
-// Feed 处理 GET /api/feed?path=/xxx：按配置的数据源返回短视频 Feed 流。
-// path 对网盘源是目录，对 drpy 源可临时充当搜索关键词；不传时网盘源用服务器配置的视频路径。
+// Feed 处理 GET /api/feed：按配置返回 Feed 流。
+// 有启用中的在线源时，把所有源勾选栏目的第一页合并后随机混排；
+// 一个在线源都没有时，回退到网盘目录（path 默认用配置里的视频路径）。
 func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
-	primary := h.sources.Primary()
-	if primary == nil {
-		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置任何视频源")
-		return
-	}
-
 	dir := r.URL.Query().Get("path")
-	if dir == "" && primary.Name() == "alist" {
+	if dir == "" {
 		dir = h.store.GetAlist().BasePath
 	}
-	if dir == "" && primary.Name() == "alist" {
-		Fail(w, http.StatusBadRequest, CodeBadRequest, "缺少 path 参数")
-		return
-	}
 
-	items, err := primary.Feed(r.Context(), dir, r.URL.Query().Get("password"))
+	items, err := h.sources.MixedFeed(r.Context(), dir)
 	if err != nil {
-		slog.Error("生成 Feed 失败", "source", primary.Name(), "path", dir, "err", err)
+		slog.Error("生成 Feed 失败", "path", dir, "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "生成 Feed 失败: "+err.Error())
 		return
 	}
 	OK(w, items)
 }
 
-// FeedAll 处理 GET /api/feed/all?category_id=xxx：返回该栏目下的全部视频（只有标题与封面）。
-// 首页 /api/feed 仍只取第一页；合集面板按需调本接口，几百条也只渲染图片和文字。
+// FeedAll 处理 GET /api/feed/all?source_id=xxx&category_id=yyy：
+// 返回某个在线源某个栏目下的全部视频（只有标题与封面）。
+// 首页 /api/feed 仍只取第一页；合集面板按需调本接口。
 func (h *Handler) FeedAll(w http.ResponseWriter, r *http.Request) {
 	categoryID := strings.TrimSpace(r.URL.Query().Get("category_id"))
 	if categoryID == "" {
@@ -112,20 +104,32 @@ func (h *Handler) FeedAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	drpy := h.sources.Drpy()
-	if drpy == nil {
-		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "未配置 drpy 在线源")
+	o := h.onlineSourceOrFirst(r.URL.Query().Get("source_id"))
+	if o == nil {
+		Fail(w, http.StatusFailedDependency, CodeUpstreamErr, "该视频对应的数据源未启用")
 		return
 	}
 
-	items, err := drpy.AllFeedItems(r.Context(), categoryID)
+	items, err := o.AllFeedItems(r.Context(), categoryID)
 	if err != nil {
-		slog.Error("拉取栏目全部视频失败", "category_id", categoryID, "err", err)
+		slog.Error("拉取栏目全部视频失败", "source_id", o.ID(), "category_id", categoryID, "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "拉取栏目全部视频失败: "+err.Error())
 		return
 	}
 	OK(w, items)
 }
+
+// onlineSourceOrFirst 按 ID 找在线源；没传 ID 时用第一个已启用的源。
+func (h *Handler) onlineSourceOrFirst(sourceID string) *source.OnlineSource {
+	if strings.TrimSpace(sourceID) != "" {
+		return h.sources.Online(sourceID)
+	}
+	if list := h.sources.OnlineList(); len(list) > 0 {
+		return list[0]
+	}
+	return nil
+}
+
 
 // VideoURL 处理 GET /api/video/url?path=<视频路径>：实时返回最新播放直链。
 // 前端每滑到一个视频就调一次，不要缓存 RawURL。
