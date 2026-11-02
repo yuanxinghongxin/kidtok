@@ -895,11 +895,39 @@ function observeSlides() {
   feedEl.querySelectorAll('.slide').forEach((slide) => observer.observe(slide));
 }
 
-// 自动播放被浏览器拦下时：先临时静音起播，声音留到用户第一次触摸再恢复。
+// 自动播放被浏览器拦下时：先临时静音起播，声音留到用户触摸时再恢复。
 // 不能在起播后立刻取消静音：iOS / 部分 WebView 在非用户手势里给视频
 // 取消静音会直接把视频暂停，表现就是「每一屏都停在暂停状态」。
-let pendingUnmute = false; // 有视频是靠临时静音才起播的
-let pendingGesturePlay = false; // 连静音自动播放都被拦，等首次触摸再放
+let pendingGesturePlay = false; // 连静音自动播放都被拦，等用户触摸再放
+
+// 手机浏览器（尤其 iOS「添加到主屏幕」的独立窗口）在页面还没有任何用户手势时，
+// 一律不允许有声自动播放。这类环境直接把「无手势起播」当策略静音处理：先静音起播，
+// 等下一次手势再还声音。不能依赖 play() 被拒的异步回调——它常常晚于用户手势到达，
+// 只挂一次性监听就会永远等不到第二次手势，表现就是「一直静音」。
+let hadGesture = false;
+const needsGestureForAudio =
+  /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+  window.matchMedia('(display-mode: standalone)').matches ||
+  window.navigator.standalone === true;
+
+// 借一次用户手势把「策略静音」的视频恢复成有声。
+// iOS 独立窗口里光把 muted 改成 false 往往仍然没声音（音频通道没打开），
+// 必须重新触发一次播放——效果等同用户手动「点一下暂停再播放」。
+function restoreAudio(video) {
+  const wasPlaying = !video.paused;
+  video._policyMuted = false;
+  video.muted = false;
+  // 已在播的先暂停：紧接着的 play() 才会重新打开音频通道
+  if (wasPlaying) pauseVideo(video);
+  tryStartVideo(video).catch(() => revertToMuted(video));
+  // 有的 WebView 不报错，而是直接把视频暂停：只要不是用户自己点的，退回静音继续播
+  setTimeout(() => {
+    const slide = video.parentNode;
+    if (slide && slide.dataset.active !== '1') return;
+    if (!video._policyMuted && video.paused && !video._userPaused) revertToMuted(video);
+  }, 400);
+}
 
 function startVideo(video) {
   return video._player ? video._player.play() : video.play();
@@ -920,14 +948,22 @@ function playVideo(video) {
   if (!video._player && !video.src) return;
   video._userPaused = false;
 
+  if (!hadGesture && !muted && needsGestureForAudio) {
+    // 手势之前的有声自动播放一定会被拦，直接静音起播并标记，等手势再还声音
+    video.muted = true;
+    video._policyMuted = true;
+  } else if (video._policyMuted) {
+    // 之前临时静音过的：先把声音设置还回去（手势内能直接有声，否则会再被拦一次）
+    video._policyMuted = false;
+    video.muted = muted;
+  }
+
   tryStartVideo(video).catch(() => {
     // 有声自动播放被拦：先静音让它动起来，标记一下，等手势再还声音
     video.muted = true;
     video._policyMuted = true;
-    pendingUnmute = true;
     tryStartVideo(video).catch(() => {
       // 极少数 WebView 连静音自动播放都拦：保持暂停，等用户点一下再播
-      video.muted = muted;
       pendingGesturePlay = true;
     });
   });
@@ -941,46 +977,39 @@ function revertToMuted(video) {
   tryStartVideo(video).catch(() => {});
 }
 
-// 刚取消静音时复查一次：有的 WebView 不报错，而是直接把这个视频暂停。
-// 只要不是用户自己点的暂停，就退回静音继续播。
-function guardUnmute(video) {
-  tryStartVideo(video).catch(() => revertToMuted(video));
-  setTimeout(() => {
-    const slide = video.parentNode;
-    if (slide && slide.dataset.active !== '1') return;
-    if (!video._policyMuted && video.paused && !video._userPaused) revertToMuted(video);
-  }, 400);
-}
-
-// 给某一屏设置声音；刚从「策略静音」恢复、且本来正在播放时要复查是否被系统暂停。
+// 给某一屏设置声音；刚取消「策略静音」且本来在播放的，要走 restoreAudio 重开音频通道。
 // 已经在暂停的屏（预读/滑走的屏）只改 muted，不主动起播，避免后台偷偷出声。
 function applyMute(video, next) {
-  const wasPolicyMuted = !!video._policyMuted;
-  const wasPlaying = !video.paused;
+  if (next) {
+    video._policyMuted = false;
+    video.muted = true;
+    return;
+  }
+  if (video._policyMuted && !video.paused) {
+    restoreAudio(video);
+    return;
+  }
   video._policyMuted = false;
-  video.muted = next;
-  if (!next && wasPolicyMuted && wasPlaying) guardUnmute(video);
+  video.muted = false;
 }
 
-// 用户第一次触摸/按键时：把「策略静音」的视频恢复成用户设置的声音；
-// 若之前完全没起播，则借这次手势再播一次。
+// 每次用户触摸/按键都检查一遍当前屏：把「策略静音」的视频恢复成用户设置的声音。
+// 不能只做一次——自动播放被拦的回调是异步的，常常在用户第一次触摸之后才到达。
 // 用 touchend / click：iOS 只认这两级用户手势，touchstart 不算。
-function onFirstGesture() {
-  if (pendingUnmute) {
-    pendingUnmute = false;
-    feedEl.querySelectorAll('video').forEach((video) => {
-      if (video._policyMuted) applyMute(video, muted);
-    });
-  }
+function onUserGesture() {
+  hadGesture = true;
   if (pendingGesturePlay && activeSlide) {
     pendingGesturePlay = false;
     const video = activeSlide.querySelector('video');
     if (video && video.paused) playVideo(video);
   }
+  if (muted || !activeSlide) return;
+  const video = activeSlide.querySelector('video');
+  if (video && video._policyMuted) restoreAudio(video);
 }
 
 ['touchend', 'click', 'keydown'].forEach((type) =>
-  document.addEventListener(type, onFirstGesture, { capture: true })
+  document.addEventListener(type, onUserGesture, { capture: true })
 );
 
 function pauseVideo(video) {
