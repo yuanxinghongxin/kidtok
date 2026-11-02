@@ -137,7 +137,6 @@ const sheetSub = document.getElementById('sheet-sub');
 const sheetList = document.getElementById('sheet-list');
 const sheetClose = document.getElementById('sheet-close');
 const backBtn = document.getElementById('back-to-feed');
-const refreshBtn = document.getElementById('refresh-btn');
 const pullEl = document.getElementById('pull-refresh');
 const pullText = document.getElementById('pull-text');
 const preloadSub = document.getElementById('preload-sub');
@@ -2246,7 +2245,6 @@ function startRefresh() {
   pullEl.style.transform = 'translateY(10px)';
   pullEl.style.removeProperty('--rot');
   pullText.textContent = '正在刷新';
-  refreshBtn.classList.add('spinning');
 
   // 合集连播中触发刷新：先退出合集，回到推荐流
   if (currentMode === 'collection') {
@@ -2275,7 +2273,6 @@ function startRefresh() {
   // 4. 至少展示一小会儿转圈，避免一闪而过
   setTimeout(() => {
     refreshing = false;
-    refreshBtn.classList.remove('spinning');
     settlePull();
   }, 800);
 }
@@ -2351,9 +2348,6 @@ feedEl.addEventListener(
   },
   { passive: false }
 );
-
-// PC 右上角小圆按钮：效果与下拉相同
-refreshBtn.addEventListener('click', startRefresh);
 
 // ---------- 我的 · 服务器配置 ----------
 let configOpen = false;

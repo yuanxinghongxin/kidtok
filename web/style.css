@@ -194,37 +194,6 @@ body {
   }
 }
 
-/* PC 端右上角小圆刷新按钮（只在鼠标/触控板设备显示） */
-.nav-refresh {
-  position: absolute;
-  right: 16px;
-  top: calc(56px + env(safe-area-inset-top));
-  z-index: 21;
-  display: none;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  color: #fff;
-  font-size: 18px;
-  line-height: 1;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 50%;
-  backdrop-filter: blur(10px);
-  cursor: pointer;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .nav-refresh {
-    display: grid;
-  }
-}
-
-.nav-refresh.spinning .ico {
-  animation: pullSpin 0.8s linear infinite;
-}
-
 /* ============ 视频层 ============ */
 
 /* 视频铺满整个视口（沉浸式），底部导航改为悬浮透明层 */
