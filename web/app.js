@@ -917,24 +917,50 @@ const needsGestureForAudio =
   window.matchMedia('(display-mode: standalone)').matches ||
   window.navigator.standalone === true;
 
-// iOS 的 WebKit 只认「用户手势里发起的播放」有声：滑过去的新视频即使 muted=false
-// 也常常是静的（左上角图标显示有声音），用户实测「点一下暂停再播放」才会出声。
-// 所以每次手势、以及新视频起播后，都对当前屏补一次「暂停 → 取消静音 → 播放」。
-// 每个视频只补一次：补成功就打上 _audioOn，补失败会退回静音并清掉标记，
-// 下一次手势或下一次起播再重试。
-function ensureAudible(target) {
-  const slide = target || activeSlide;
-  if (!slide || slide.dataset.active !== '1') return;
-  if (muted || !isIOS || !hadGesture) return;
-  const video = slide.querySelector('video');
-  if (!video || video._audioOn) return;
+// iOS 的 WebKit 只认「用户手势里发起的播放」有声：自动起播的视频就算 muted=false
+// 也是静的（左上角图标显示有声音，实际没声），必须重新触发一次播放才会打开音频通道
+// （用户实测「点一下暂停再播放」就有声）。所以分两种时机补声音：
+//   1. 真·手势里（touchend / click）：直接解锁这一屏，最可靠；
+//   2. 起播之后自动重试最多 2 次：滑动刚结束时通常还在手势有效期内。
+// 没解锁成功的屏，下一次手势会再补一次，不会一直静音。
+function unlockAudio(video) {
+  if (!video || muted || video._userPaused) return;
   if (!video._player && !video.src) return;
   if (video.paused) {
-    video._audioOn = true; // 就在这次手势里起播，直接有声
-    playVideo(video);
+    playVideo(video); // 还没起播：直接在手势里起播，有声
     return;
   }
   restoreAudio(video); // 已在播但没声音：重播一次打开音频通道
+}
+
+function unlockSlide(slide) {
+  if (!slide || slide._audioUnlocked) return;
+  const video = slide.querySelector('video');
+  if (!video || (!video._player && !video.src)) return;
+  // 用户自己点停的屏不在这里起播：点击处理里会自己播，这里再播会和「点一下暂停/播放」打架
+  if (video.paused) return;
+  slide._audioUnlocked = true;
+  unlockAudio(video);
+}
+
+// 当前滚动位置对应的屏（滑动结束后就是即将成为当前屏的那一屏）
+function nearestSlide() {
+  const slides = feedEl.querySelectorAll('.slide');
+  if (!slides.length) return null;
+  const h = feedEl.clientHeight || 1;
+  const idx = Math.max(0, Math.min(slides.length - 1, Math.round(feedEl.scrollTop / h)));
+  return slides[idx];
+}
+
+function ensureAudible(slide) {
+  const target = slide || activeSlide;
+  if (!target || target.dataset.active !== '1') return;
+  if (muted || !isIOS || !hadGesture || target._audioUnlocked) return;
+  const video = target.querySelector('video');
+  if (!video || (!video._player && !video.src) || video._userPaused) return;
+  video._audioTries = (video._audioTries || 0) + 1;
+  if (video._audioTries > 2) return;
+  unlockAudio(video);
 }
 
 // 借一次用户手势把「策略静音」的视频恢复成有声。
@@ -943,7 +969,6 @@ function ensureAudible(target) {
 function restoreAudio(video) {
   const wasPlaying = !video.paused;
   video._policyMuted = false;
-  video._audioOn = true;
   video.muted = false;
   // 已在播的先暂停：紧接着的 play() 才会重新打开音频通道
   if (wasPlaying) pauseVideo(video);
@@ -1001,7 +1026,8 @@ function revertToMuted(video) {
   if (video._policyMuted) return;
   video._policyMuted = true;
   video.muted = true;
-  video._audioOn = false; // 没补成功，下次手势再试
+  // 解锁没成功：清掉这屏的标记，下一次手势再补一次
+  if (video.parentNode) video.parentNode._audioUnlocked = false;
   tryStartVideo(video).catch(() => {});
 }
 
@@ -1024,14 +1050,34 @@ function applyMute(video, next) {
 // 每次用户触摸/按键都检查一遍当前屏：把「策略静音」的视频恢复成用户设置的声音。
 // 不能只做一次——自动播放被拦的回调是异步的，常常在用户第一次触摸之后才到达。
 // 用 touchend / click：iOS 只认这两级用户手势，touchstart 不算。
-function onUserGesture() {
+// 手势必须落在首页的视频区域里才操作播放：在「我的」、抽屉、合集面板上点按，
+// 不能顺手把后台的视频播起来。
+function gestureInFeed(event) {
+  if (pageHome.hidden || sheet.classList.contains('open')) return false;
+  if (!event || event.type === 'keydown') return true;
+  const target = event.target;
+  if (!target || target === document || target === document.body) return true;
+  // 拖进度条、点右侧互动栏时不碰播放，免得重播一下
+  if (target.closest && target.closest('.scrub, .rail')) return false;
+  return feedEl.contains(target);
+}
+
+function onUserGesture(event) {
   hadGesture = true;
+  if (!gestureInFeed(event)) return;
   if (pendingGesturePlay && activeSlide) {
     pendingGesturePlay = false;
     const video = activeSlide.querySelector('video');
     if (video && video.paused) playVideo(video);
   }
   if (muted || !activeSlide) return;
+  if (isIOS) {
+    // 手势这一拍里解锁当前屏；滑动时顺手解锁即将到位的那一屏
+    unlockSlide(activeSlide);
+    const near = nearestSlide();
+    if (near && near !== activeSlide) unlockSlide(near);
+    return;
+  }
   ensureAudible();
 }
 
@@ -1632,6 +1678,8 @@ function bindScrollGuard() {
           }
         }
         preloadNext();
+        // iOS：滑动停稳后再补一次有声检查（这时通常还在手势有效期内）
+        ensureAudible();
       }, 300);
     },
     { passive: true }
@@ -1652,11 +1700,15 @@ function activate(slide) {
   prepareSlide(slide);
   playVideo(video);
   // 新屏起播后再补一次有声检查：滑动刚结束，这时通常还在手势有效期内
-  if (isIOS && !muted && hadGesture) {
-    clearTimeout(slide._audibleTimer);
-    slide._audibleTimer = setTimeout(() => {
-      if (slide.dataset.active === '1') ensureAudible(slide);
-    }, 400);
+  if (isIOS) {
+    slide._audioUnlocked = false;
+    video._audioTries = 0;
+    if (!muted && hadGesture) {
+      clearTimeout(slide._audibleTimer);
+      slide._audibleTimer = setTimeout(() => {
+        if (slide.dataset.active === '1') ensureAudible(slide);
+      }, 400);
+    }
   }
   preloadNext();
 }
