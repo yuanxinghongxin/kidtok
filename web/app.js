@@ -364,7 +364,8 @@ function mockFor(index) {
 // ---------- 进度条（贴底线，整条区域可拖动） ----------
 // 抖音的手感：按住任意位置就能拖、拖动中实时 seek、进度末端跟一个圆点，
 // 上方气泡实时显示「当前时间 / 总时长」，松手就停在手指的位置。
-function bindScrub(slide, video) {
+function bindScrub(slide) {
+  const videoOf = () => slide._video;
   const scrub = document.createElement('div');
   scrub.className = 'scrub hide';
 
@@ -394,6 +395,8 @@ function bindScrub(slide, video) {
   };
 
   const durationOf = () => {
+    const video = videoOf();
+    if (!video) return 0;
     const d = video.duration;
     return isFinite(d) && d > 0 ? d : 0;
   };
@@ -409,12 +412,18 @@ function bindScrub(slide, video) {
   // 拖动中实时改 currentTime，画面跟着手指走；不暂停播放，
   // 这样不会弹出屏幕中间的大播放图标
   const seek = (ratio) => {
+    const video = videoOf();
     const total = durationOf();
-    if (total > 0) video.currentTime = ratio * total;
+    if (video && total > 0) video.currentTime = ratio * total;
   };
 
   function refresh() {
     if (dragging) return;
+    const video = videoOf();
+    if (!video) {
+      scrub.classList.add('hide');
+      return;
+    }
     const duration = video.duration;
     if (!isFinite(duration) || duration <= 0) {
       scrub.classList.add('hide');
@@ -520,9 +529,9 @@ function bindScrub(slide, video) {
     cancel();
   });
 
-  video.addEventListener('timeupdate', refresh);
-  video.addEventListener('loadedmetadata', refresh);
-  video.addEventListener('durationchange', refresh);
+  // 视频元素是池里固定的那几个，事件只在池元素上绑一次（见 bindPoolVideo），
+  // 这里把刷新函数挂到屏上，池元素回调里按 video._slide 找到对应进度条
+  slide._scrubRefresh = refresh;
 }
 
 // ---------- 右侧互动栏 ----------
@@ -694,75 +703,10 @@ function buildSlide(item, index) {
   if (coverUrl) cover.src = coverUrl;
   slide.appendChild(cover);
 
-  const video = document.createElement('video');
-  video.className = 'player';
-  // 默认静音：新屏先静音，用户点左上角按钮才解锁声音
-  video.muted = !soundOn || (!hadGesture && needsGestureForAudio);
-  video.loop = true;
-  video.playsInline = true;
-  video.preload = 'none';
-  video.setAttribute('playsinline', '');
-  // 起播前用封面当 poster：iOS 的 <video> 在没有首帧时会画一块白色底，
-  // 表现为播放刚开始时画面外面闪一圈白边/白框，有 poster 就不会出现
-  if (coverUrl) video.poster = coverUrl;
-
+  // 视频元素不在这里创建：全站只用固定的 3 个池化 <video>，滑到哪一屏就把
+  // 池里的元素搬进哪一屏（换 src），这样用户手势解锁过的元素可以一直复用到新内容
   const hint = document.createElement('div');
   hint.className = 'hint';
-
-  video.addEventListener('loadeddata', () => {
-    stopWatchdog(slide);
-    slide.classList.add('playing');
-  });
-
-  // 封面淡出的时机：等「首帧真的画出来」再淡出（painted），而不是 loadeddata。
-  // 因为 MSE(TS) 在 loadeddata 时可能还在解码，提前撤掉封面会露出一两秒黑屏；
-  // 视频没出画面前一直显示高清封面，用户不会看到黑屏。
-  const markPainted = () => {
-    slide.classList.add('painted');
-    hint.classList.remove('show');
-    // 记住这一屏的封面，下次冷启动先用它铺满整屏，避免黑屏。
-    // 取原始 src 属性：封面为空时 src 属性是 ''，而 img.src 会变成本页地址
-    const coverImg = slide.querySelector('img.cover');
-    if (coverImg) saveLastCover(coverImg.getAttribute('src'));
-  };
-  video.addEventListener('playing', markPainted);
-  // iOS 上「起播成功但没声音」很常见：画面一出来，借最近这次手势补开音频通道
-  video.addEventListener('playing', () => {
-    if (isIOS && !video.muted) ensureAudible(slide);
-  });
-  // 暂停态只由视频自身的 play/pause 事件驱动，保证图标和真实播放状态永远一致
-  video.addEventListener('pause', () => slide.classList.add('paused'));
-  video.addEventListener('play', () => slide.classList.remove('paused'));
-  // 原生解码失败时再兜底试一次 mpegts（只在按容器判断为 mp4/unknown 时才会走到原生）
-  video.addEventListener('error', () => {
-    // 切集时会先清空 src，这里跳过空源触发的错误
-    if (!video._url) return;
-    // HLS 的错误交给 hls.js 实例自己处理，不要再走 mpegts 兜底
-    if (video._hls) return;
-    // 编码探测已经判定解不了（mp4v / HEVC），别再浪费时间走 mpegts 兜底
-    if (slide._codecBad) {
-      skipUnplayable(slide, slide._codec, false);
-      return;
-    }
-    if (video._fallbackTried) {
-      slide.classList.remove('playing');
-      hint.textContent = '播放失败：该视频编码不支持';
-      hint.classList.add('show');
-      skipUnplayable(slide, slide._codec, !slide._codec);
-      return;
-    }
-    video._fallbackTried = true;
-    startMpegts(video, slide, slide.dataset.active === '1');
-  });
-  // 循环：原生播放靠 loop 属性；mpegts 的 MediaSource 到片尾已 endOfStream，只能重建播放器。
-  // HLS 由 hls.js 自己按 loop 续播，这里不重建，避免把 HLS 实例误建成 mpegts 播放器。
-  video.addEventListener('ended', () => {
-    if (!video._player || video._hls) return;
-    video._player.destroy();
-    video._player = null;
-    startMpegts(video, slide, slide.dataset.active === '1');
-  });
-  slide.appendChild(video);
   slide.appendChild(hint);
 
   // 暂停时落在屏幕正中的大号播放三角：不拦截点击，点它照样等同于点视频
@@ -780,10 +724,179 @@ function buildSlide(item, index) {
   overlay.appendChild(buildInfo(slide));
   slide.appendChild(overlay);
 
-  bindScrub(slide, video);
+  bindScrub(slide);
   applyInfo(slide, col, item);
   return slide;
 }
+
+// ---------- 视频元素池 ----------
+// iOS 的自动播放策略是按元素授权的：只有被用户手势「亲自」play() 过的 <video>
+// 才能出声。所以全站只保留固定的 3 个元素，滑到哪一屏就把其中一个搬进哪一屏、
+// 只换 src。解锁按钮点一次，3 个元素都拿到发声授权，之后换内容也一直有声。
+const POOL_SIZE = 3;
+const poolVideos = [];
+
+function initVideoPool() {
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const video = document.createElement('video');
+    video.className = 'player';
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.preload = 'none';
+    video.setAttribute('playsinline', '');
+    bindPoolVideo(video);
+    poolVideos.push(video);
+  }
+}
+
+// 事件全部挂在池元素上，回调里用 video._slide 取「当前宿主屏」：元素搬家后不会错位
+function bindPoolVideo(video) {
+  video.addEventListener('loadeddata', () => {
+    const slide = video._slide;
+    if (!slide) return;
+    stopWatchdog(slide);
+    slide.classList.add('playing');
+  });
+
+  // 封面淡出等「首帧真的画出来」（painted），而不是 loadeddata：
+  // MSE(TS) 在 loadeddata 时可能还在解码，提前撤封面会露一两秒黑屏
+  video.addEventListener('playing', () => {
+    const slide = video._slide;
+    if (!slide) return;
+    slide.classList.add('painted');
+    const hint = slide.querySelector('.hint');
+    if (hint) hint.classList.remove('show');
+    const coverImg = slide.querySelector('img.cover');
+    if (coverImg) saveLastCover(coverImg.getAttribute('src'));
+    if (isIOS && !video.muted) ensureAudible(slide);
+  });
+
+  // 进度条跟随「当前宿主屏」：池元素搬去哪一屏，就刷新哪一屏的进度条
+  ['timeupdate', 'loadedmetadata', 'durationchange'].forEach((type) => {
+    video.addEventListener(type, () => {
+      const slide = video._slide;
+      if (slide && slide._scrubRefresh) slide._scrubRefresh();
+    });
+  });
+
+  // 暂停态只由视频自身的 play/pause 事件驱动，保证图标和真实状态一致
+  video.addEventListener('pause', () => {
+    if (video._slide) video._slide.classList.add('paused');
+  });
+  video.addEventListener('play', () => {
+    if (video._slide) video._slide.classList.remove('paused');
+  });
+
+  // 原生解码失败时再兜底试一次 mpegts（只在按容器判断为 mp4/unknown 时才会走到原生）
+  video.addEventListener('error', () => {
+    const slide = video._slide;
+    if (!slide) return;
+    if (!video._url) return; // 摘下来时会清空 src，这里跳过空源触发的错误
+    if (video._hls) return; // HLS 错误交给 hls.js 自己处理
+    const hint = slide.querySelector('.hint');
+    if (slide._codecBad) {
+      skipUnplayable(slide, slide._codec, false);
+      return;
+    }
+    if (video._fallbackTried) {
+      slide.classList.remove('playing');
+      if (hint) {
+        hint.textContent = '播放失败：该视频编码不支持';
+        hint.classList.add('show');
+      }
+      skipUnplayable(slide, slide._codec, !slide._codec);
+      return;
+    }
+    video._fallbackTried = true;
+    startMpegts(video, slide, slide.dataset.active === '1');
+  });
+
+  // 循环：原生播放靠 loop 属性；mpegts 的 MediaSource 到片尾已 endOfStream，只能重建播放器。
+  // HLS 由 hls.js 自己按 loop 续播，这里不重建，避免把 HLS 实例误建成 mpegts 播放器。
+  video.addEventListener('ended', () => {
+    const slide = video._slide;
+    if (!slide) return;
+    if (!video._player || video._hls) return;
+    video._player.destroy();
+    video._player = null;
+    startMpegts(video, slide, slide.dataset.active === '1');
+  });
+}
+
+// 取这一屏的视频：有就复用，没有就从池里挑一个搬进来
+function assignVideo(slide) {
+  if (slide._video) return slide._video;
+  const video = pickPoolVideo(slide);
+  if (!video) return null;
+  if (video._slide) detachVideo(video._slide);
+  // 起播前用封面当 poster：iOS 的 <video> 没有首帧时会画一块白底，闪一下白框
+  const coverImg = slide.querySelector('img.cover');
+  video.poster = coverImg ? coverImg.getAttribute('src') || '' : '';
+  if (video.parentNode) video.parentNode.removeChild(video);
+  slide.appendChild(video);
+  slide._video = video;
+  video._slide = slide;
+  video._url = '';
+  video._fallbackTried = false;
+  video._audioTries = 0;
+  video.muted = !soundOn;
+  slide._audioUnlocked = false;
+  return video;
+}
+
+function pickPoolVideo(slide) {
+  const free = poolVideos.find((v) => !v._slide);
+  if (free) return free;
+  // 都在用：抢距离最远、且不在预读范围里的那一屏
+  const index = typeof slide._index === 'number' ? slide._index : 0;
+  let victim = null;
+  let far = -1;
+  poolVideos.forEach((v) => {
+    const host = v._slide;
+    if (!host || host === slide || host === activeSlide) return;
+    if (preloadSlides.has(host)) return;
+    const d = Math.abs((host._index || 0) - index);
+    if (d > far) {
+      far = d;
+      victim = v;
+    }
+  });
+  return victim;
+}
+
+// 把池元素从某一屏摘下来：销毁播放器、清空 src，元素回池里等下一次装载
+function detachVideo(slide) {
+  const video = slide._video;
+  if (!video) return;
+  destroyHls(video);
+  if (video._player) {
+    try {
+      video._player.destroy();
+    } catch (err) {
+      // 播放器可能已经销毁
+    }
+    video._player = null;
+  }
+  if (!video.paused) video.pause();
+  video.removeAttribute('src');
+  try {
+    video.load();
+  } catch (err) {
+    // 空源 load 在个别浏览器会抛错，忽略
+  }
+  video._url = '';
+  video._fallbackTried = false;
+  video._slide = null;
+  slide._video = null;
+  slide.dataset.ready = '0';
+  slide.classList.remove('playing');
+  slide.classList.remove('paused');
+  if (video.parentNode === slide) slide.removeChild(video);
+  loadedSlides.delete(slide);
+}
+
+initVideoPool();
 
 // 每次切换模式都整段重建 DOM：旧的播放器/监听全部销毁，逻辑最简单也最不容易残留状态。
 function teardownSlides() {
@@ -803,7 +916,8 @@ function teardownSlides() {
     clearTimeout(scrollWindowTimer);
     scrollWindowTimer = null;
   }
-  feedEl.querySelectorAll('video').forEach((video) => {
+  // 池里的元素要保住（下次渲染还要复用），先把它们从各屏摘下来再清空 DOM
+  poolVideos.forEach((video) => {
     destroyHls(video);
     if (video._player) {
       try {
@@ -814,12 +928,15 @@ function teardownSlides() {
       video._player = null;
     }
     video._url = '';
+    video._fallbackTried = false;
+    video._slide = null;
     video.removeAttribute('src');
     try {
       video.load();
     } catch (err) {
       // 忽略空源导致的异常
     }
+    if (video.parentNode) video.parentNode.removeChild(video);
   });
   feedEl.innerHTML = '';
 }
@@ -853,7 +970,7 @@ function jumpToIndex(index) {
   const prev = activeSlide;
   if (prev && prev !== target) {
     prev.dataset.active = '';
-    const prevVideo = prev.querySelector('video');
+    const prevVideo = prev._video;
     if (prevVideo) pauseVideo(prevVideo);
     releaseSlide(prev);
     preloadSlides.delete(prev);
@@ -913,7 +1030,7 @@ function unlockAudio(video) {
 
 function unlockSlide(slide) {
   if (!slide || slide._audioUnlocked) return;
-  const video = slide.querySelector('video');
+  const video = slide._video;
   if (!video || (!video._player && !video.src)) return;
   // 用户自己点停的屏不在这里起播：点击处理里会自己播，这里再播会和「点一下暂停/播放」打架
   if (video.paused) return;
@@ -934,7 +1051,7 @@ function ensureAudible(slide) {
   const target = slide || activeSlide;
   if (!target || target.dataset.active !== '1') return;
   if (!soundOn || !isIOS || !hadGesture || target._audioUnlocked) return;
-  const video = target.querySelector('video');
+  const video = target._video;
   if (!video || (!video._player && !video.src) || video._userPaused) return;
   video._audioTries = (video._audioTries || 0) + 1;
   if (video._audioTries > 2) return;
@@ -1030,7 +1147,7 @@ function onUserGesture(event) {
   if (!gestureInFeed(event)) return;
   if (pendingGesturePlay && activeSlide) {
     pendingGesturePlay = false;
-    const video = activeSlide.querySelector('video');
+    const video = activeSlide._video;
     if (video && video.paused) playVideo(video);
   }
   if (!activeSlide || !soundOn) return;
@@ -1056,28 +1173,69 @@ function pauseVideo(video) {
   }
 }
 
-// 声音开关：默认静音，点按钮解锁。解锁是在手势里做的，必须重播一次才会真正出声。
-// 关声音只改 muted，不打断播放。
+// 页面级音频会话解锁：和 play() 放在同一个点击事件里，iOS 才认。
+let audioCtx = null;
+function unlockAudioContext() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (err) {
+    // 不支持 AudioContext 的浏览器直接忽略
+  }
+}
+
+// 声音开关：默认静音，点按钮解锁。
+// 解锁必须在手势里「亲自」对每个池元素调用 play()：iOS 的发声授权是按元素给的，
+// 这里遍历全部池元素，有内容的一并 play()，之后换 src 也保持有声。
 function setSound(next) {
   soundOn = next;
   muteBtn.classList.toggle('is-muted', !soundOn);
   muteBtn.innerHTML = soundOn ? ICONS.volumeOn : ICONS.volumeMute;
   muteBtn.setAttribute('aria-label', soundOn ? '关闭声音' : '开启声音');
+
   if (!soundOn) {
-    feedEl.querySelectorAll('video').forEach((video) => {
+    poolVideos.forEach((video) => {
       video.muted = true;
       video._policyMuted = false;
     });
     return;
   }
-  if (!activeSlide) return;
-  const video = activeSlide.querySelector('video');
-  if (!video || (!video._player && !video.src)) return;
-  if (video.paused) {
-    playVideo(video);
+
+  unlockAudioContext();
+
+  const active = activeSlide ? activeSlide._video : null;
+  poolVideos.forEach((video) => {
+    // 严禁用 volume 淡入：授权只靠 muted=false + play()，由池元素自己拿到
+    video._policyMuted = false;
+    if (!video._slide || (!video.src && !video._player)) {
+      // 还没挂源的元素：只同步状态，等真正起播时 playVideo 会再设一次 muted
+      video.muted = false;
+      return;
+    }
+    if (video === active) {
+      video.muted = false;
+      const started = video.play();
+      if (started && started.catch) started.catch(() => {});
+      return;
+    }
+    // 邻屏 / 预读屏：静音 play() 一下只为拿发声授权，随即暂停，避免后台外放
+    video.muted = true;
+    const started = video.play();
+    if (started && started.catch) started.catch(() => {});
+    setTimeout(() => {
+      if (video._slide && video._slide !== activeSlide && !video.paused) video.pause();
+    }, 0);
+  });
+
+  if (!active) return;
+  if (!active.src && !active._player) return;
+  if (active.paused) {
+    playVideo(active); // 在手势里起播，直接有声
     return;
   }
-  restoreAudio(video);
+  restoreAudio(active); // 已在播：重播一次打开音频通道
 }
 
 // 高级设置「预加载数量」：写偏好 + 同步显示 + 立刻按新数量补齐或收回预读
@@ -1366,7 +1524,7 @@ function skipUnplayable(slide, four, stalled) {
     hint.classList.add('show');
   }
 
-  const video = slide.querySelector('video');
+  const video = slide._video;
   if (video) {
     if (video._player) {
       try {
@@ -1434,7 +1592,7 @@ async function prepareSlide(slide) {
   slide._skipping = false;
   slide._codecBad = false;
 
-  const video = slide.querySelector('video');
+  const video = assignVideo(slide);
   const hint = slide.querySelector('.hint');
   if (!video) return;
 
@@ -1474,7 +1632,10 @@ async function prepareSlide(slide) {
   }
   video.preload = 'auto';
   // 预读阶段可能已经挂了 src，避免重复赋值触发重新加载
-  if (!video.getAttribute('src')) video.src = video._url;
+  if (!video.getAttribute('src')) {
+    video.muted = !soundOn; // 换源后立刻按全局声音状态同步 muted
+    video.src = video._url;
+  }
   loadedSlides.add(slide);
   playVideo(video);
   armWatchdog(slide, video);
@@ -1527,27 +1688,8 @@ function releaseSlide(slide) {
   slide.classList.remove('painted');
   stopWatchdog(slide);
   slide._skipping = false;
-
-  const video = slide.querySelector('video');
-  if (!video) return;
-  destroyHls(video);
-  if (video._player) {
-    try {
-      video._player.destroy();
-    } catch (err) {
-      // 播放器可能已经销毁
-    }
-    video._player = null;
-  }
-  if (!video.paused) video.pause();
-  video.removeAttribute('src');
-  try {
-    video.load();
-  } catch (err) {
-    // 空源 load 在个别浏览器会抛错，忽略
-  }
-  video._url = '';
-  video._fallbackTried = false;
+  // 池元素摘回池里，这一屏不再持有任何连接
+  detachVideo(slide);
   loadedSlides.delete(slide);
 }
 
@@ -1593,8 +1735,9 @@ async function preloadNext() {
   for (const next of targets) {
     preloadSlides.add(next);
 
-    const video = next.querySelector('video');
-    if (!video || video.getAttribute('src') || video._player) continue;
+    const video = next._video || assignVideo(next);
+    if (!video) continue;
+    if (video.getAttribute('src') || video._player) continue;
 
     const container = await warmSlide(next);
     // 探测期间用户可能已经滑走、换了范围，或开始快速滚动
@@ -1602,6 +1745,7 @@ async function preloadNext() {
     if (container !== 'mp4') continue;
 
     video.preload = 'metadata';
+    video.muted = !soundOn; // 换源后立刻按全局声音状态同步 muted
     video.src = streamUrl(next);
     loadedSlides.add(next);
   }
@@ -1640,7 +1784,7 @@ function bindScrollGuard() {
           fastScrolling = false;
           // 停止滑动后补回当前屏的播放与下一屏的预读
           if (activeSlide) {
-            const video = activeSlide.querySelector('video');
+            const video = activeSlide._video;
             if (video && !video.paused) playVideo(video);
           }
         }
@@ -1654,7 +1798,7 @@ function bindScrollGuard() {
 }
 
 function activate(slide) {
-  const video = slide.querySelector('video');
+  const video = assignVideo(slide);
   if (!video) return;
   // 预读过的那一屏被滑到了，从预读集合里移除，由当前屏接管
   preloadSlides.delete(slide);
@@ -1682,7 +1826,7 @@ function activate(slide) {
 
 function deactivate(slide) {
   slide.dataset.active = '';
-  const video = slide.querySelector('video');
+  const video = slide._video;
   if (video) pauseVideo(video);
   // 不在「当前屏 + 预读范围」白名单里的，立刻释放
   enforceWhitelist();
@@ -1743,7 +1887,7 @@ feedEl.addEventListener('click', (event) => {
   }
 
   lastTap = { time: now, x: event.clientX, y: event.clientY };
-  const video = slide.querySelector('video');
+  const video = slide._video;
   clearTimeout(tapTimer);
   tapTimer = setTimeout(() => {
     if (!video) return;
