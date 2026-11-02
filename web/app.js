@@ -218,6 +218,8 @@ let returnIndex = 0; // 进入合集前，主 Feed 停留的位置
 let activeCollection = null; // collection 模式下正在连播的合集
 let dataSource = []; // 当前渲染到 DOM、正在滚动的数据源
 let observer = null; // 当前数据源对应的 IntersectionObserver
+let sheetOrigin = 'feed'; // 选集面板从哪打开：'feed' 首页 | 'collections' 我的·收录合集
+let collectionOrigin = 'feed'; // 合集连播从哪进入：决定返回时回到首页还是收录合集
 
 function getCollection(id) {
   return collections.find((col) => col.id === id) || collections[0];
@@ -633,6 +635,17 @@ function buildInfo(slide) {
   return info;
 }
 
+// 胶囊文案：一眼看出「当前是哪一季的第几集」。
+// 分季合集写成「小皮大世界 · 第2季 · 第5集」，未分季的保持原来的写法。
+function collectionTagText(col, ep, index) {
+  let text = col.name;
+  if (ep.season) text += ' · ' + ep.season;
+  text += ' · 第' + (ep.season ? ep.seasonIndex + 1 : index + 1) + '集';
+  // totalCount 是栏目全部条数（面板拉全后写入）；没有时退回已载入的集数
+  if (!ep.season) text += ' / 共 ' + (col.totalCount || col.episodes.length) + ' 集';
+  return text;
+}
+
 // 把某一集的信息（所属合集、第几集、作者、文案、各项计数）写进这一屏。
 // ep 直接传这一屏对应的条目：在线栏目单独插入的「面板里的第 N 条」不在
 // col.episodes 里，只能靠传入的条目本身取标题与序号。
@@ -647,14 +660,7 @@ function applyInfo(slide, col, ep) {
   const tagText = slide.querySelector('.collection-tag-text');
   if (!tagText) return;
 
-  // 胶囊文案要能一眼看出「当前是哪一季的第几集」：
-  // 分季合集写成「小皮大世界 · 第2季 · 第5集」，未分季的保持原来的写法
-  let text = col.name;
-  if (ep.season) text += ' · ' + ep.season;
-  text += ' · 第' + (ep.season ? ep.seasonIndex + 1 : index + 1) + '集';
-  // totalCount 是栏目全部条数（面板拉全后写入）；没有时退回已载入的集数
-  if (!ep.season) text += ' / 共 ' + (col.totalCount || col.episodes.length) + ' 集';
-  tagText.textContent = text;
+  tagText.textContent = collectionTagText(col, ep, index);
 
   const avatar = slide.querySelector('.avatar');
   if (avatar) avatar.textContent = mock.author.slice(0, 1);
@@ -1762,7 +1768,7 @@ function renderPlaylist(col, current) {
         jumpToIndex(index);
         return;
       }
-      enterCollection(col, index);
+      enterCollection(col, index, sheetOrigin);
     });
     sheetList.appendChild(item);
   });
@@ -1797,20 +1803,32 @@ function loadCategoryAll(categoryId, sourceId) {
   return categoryAllCache.get(key);
 }
 
-function openSheet(slide) {
-  if (!slide || !collections.length) return;
-  const col = getCollection(slide._collectionId);
-  if (!col || !col.episodes.length) return;
+// 打开某个合集的选集面板。currentPath 用来高亮「正在播放」的那一集，
+// 不能用序号：在线栏目首页那 30 条是打乱顺序的，和面板拉全后的顺序不一致。
+// slide 只在从首页打开时传入，用于把胶囊文案同步成面板里的真实集号。
+function openCollectionPanel(col, currentPath, origin, slide) {
+  if (!col) return;
+  if (!col.categoryId && !col.episodes.length) return;
+  sheetOrigin = origin || 'feed';
   if (col.categoryId) {
     // 在线栏目：先是首页那 30 条，面板里再按需拉全栏目几百条
-    openCategorySheet(col, slide._episodeIndex || 0);
+    openCategorySheet(col, currentPath, slide);
     return;
   }
-  renderPlaylist(col, slide._episodeIndex || 0);
+  const current = currentPath
+    ? col.episodes.findIndex((ep) => ep.path === currentPath)
+    : -1;
+  renderPlaylist(col, current);
   showSheet();
 }
 
-async function openCategorySheet(col, current) {
+function openSheet(slide) {
+  if (!slide || !collections.length) return;
+  const col = getCollection(slide._collectionId);
+  openCollectionPanel(col, slide.dataset.path || '', 'feed', slide);
+}
+
+async function openCategorySheet(col, currentPath, slide) {
   sheetTitle.textContent = col.name;
   sheetSub.textContent = '正在加载全部内容…';
   sheetList.classList.remove('episode-grid');
@@ -1824,17 +1842,34 @@ async function openCategorySheet(col, current) {
   try {
     const items = await loadCategoryAll(col.categoryId, col.sourceId);
     col.totalCount = items.length;
+    let current = -1;
+    if (currentPath) {
+      current = items.findIndex((item) => item.path === currentPath);
+      // 首页上的集号是按打乱顺序算的，这里拿到了栏目的真实顺序，
+      // 顺手把正在播放那一屏的胶囊文案改成真实集号。
+      if (slide && current >= 0) syncSlideEpisode(slide, col, items[current], current);
+    }
     renderCategoryGrid(col, items, current);
     requestAnimationFrame(scrollToCurrentEpisode);
   } catch (err) {
     categoryAllCache.delete((col.sourceId || '') + ':' + col.categoryId);
     // 拉全失败时退回首页已载入的那一页，至少还能选集
+    const current = currentPath
+      ? col.episodes.findIndex((ep) => ep.path === currentPath)
+      : -1;
     renderPlaylist(col, current);
     const note = document.createElement('div');
     note.className = 'sheet-loading';
     note.textContent = '全部内容加载失败：' + err.message;
     sheetList.prepend(note);
   }
+}
+
+// 把一屏的集号与胶囊文案改成面板里的真实序号（不重建这一屏）。
+function syncSlideEpisode(slide, col, ep, index) {
+  slide._episodeIndex = index;
+  const tagText = slide.querySelector('.collection-tag-text');
+  if (tagText) tagText.textContent = collectionTagText(col, ep, index);
 }
 
 // 面板网格：几百条只渲染封面 + 标题，图片用浏览器原生懒加载。
@@ -1874,10 +1909,37 @@ function renderCategoryGrid(col, items, current) {
 function playCategoryItem(col, item, items, index) {
   closeSheet();
 
+  // 从「我的 · 收录合集」进来的：把整个栏目当作连播列表，
+  // 返回时才能先回到这个合集，再回到我的页面。
+  if (sheetOrigin === 'collections') {
+    col.totalCount = items.length;
+    enterCollection(
+      col,
+      index,
+      'collections',
+      items.map((it, i) => ({
+        path: it.path,
+        name: it.name,
+        cover: it.cover_url,
+        collectionId: col.id,
+        episodeIndex: i,
+        season: '',
+        seasonIndex: i,
+        seasonCount: 0,
+        seasonTotal: col.seasonTotal || 0,
+      }))
+    );
+    return;
+  }
+
   // 首页已载入的那 30 条直接跳过去，不重复插入
   const existed = dataSource.findIndex((ep) => ep.path === item.path);
   if (existed >= 0) {
+    // 首页的集号来自打乱后的顺序，用面板里的真实序号覆盖，
+    // 否则胶囊里的「第几集」和面板中高亮的那一集仍然对不上。
+    dataSource[existed].episodeIndex = index;
     jumpToIndex(existed);
+    if (activeSlide) syncSlideEpisode(activeSlide, col, item, index);
     return;
   }
 
@@ -1912,26 +1974,64 @@ sheet.querySelector('.sheet-mask').addEventListener('click', closeSheet);
 
 // ---------- 模式切换：推荐流 <-> 合集连播 ----------
 
-// 进入合集：记住主 Feed 的位置，换成该合集的正序列表，并跳到指定集
-function enterCollection(col, episodeIndex) {
+// 进入合集：记住主 Feed 的位置，换成该合集的正序列表，并跳到指定集。
+// origin 为 'collections' 表示从「我的 · 收录合集」进入，返回时要先回合集列表。
+function enterCollection(col, episodeIndex, origin, list) {
+  const fromCollections = origin === 'collections';
   if (currentMode === 'feed') returnIndex = currentPlayIndex;
+  collectionOrigin = fromCollections ? 'collections' : 'feed';
+
+  if (fromCollections) {
+    // 从收录合集页进入播放：收起合集页，切回首页承载全屏播放
+    pageCollections.hidden = true;
+    pageMe.hidden = true;
+    pageHome.hidden = false;
+    tabButtons.forEach((tab) =>
+      tab.classList.toggle('active', tab.dataset.tab === 'home')
+    );
+  }
+
   activeCollection = col;
-  collectionList = col.episodes;
+  collectionList = list || col.episodes;
 
   renderList(collectionList, 'collection');
   jumpToIndex(episodeIndex);
   setBackVisible(true);
 }
 
-// 退出合集：换回打乱的推荐流，并回到进入前停留的那一屏
+// 退出合集：换回打乱的推荐流，并回到进入前停留的那一屏。
+// 如果是从「我的 · 收录合集」进来的，先回到收录合集页并重新打开该合集的选集面板。
 function exitCollection() {
   if (currentMode !== 'collection') return;
+  const col = activeCollection;
+  const fromCollections = collectionOrigin === 'collections';
+  collectionOrigin = 'feed';
   activeCollection = null;
   collectionList = [];
+  setBackVisible(false);
+
+  // 先切页面再重建：从收录合集退出时首页保持隐藏，
+  // 避免 IntersectionObserver 在重建后立刻起播、在后台出声。
+  if (fromCollections) {
+    pageHome.hidden = true;
+    pageMe.hidden = true;
+    pageCollections.hidden = false;
+    tabButtons.forEach((tab) =>
+      tab.classList.toggle('active', tab.dataset.tab === 'me')
+    );
+  }
 
   renderList(feedList, 'feed');
-  jumpToIndex(returnIndex);
-  setBackVisible(false);
+  if (returnIndex >= 0 && returnIndex < dataSource.length) {
+    const target = feedEl.querySelectorAll('.slide')[returnIndex];
+    if (target) {
+      feedEl.scrollTop = target.offsetTop;
+      currentPlayIndex = returnIndex;
+    }
+  }
+  feedEl.querySelectorAll('video').forEach(pauseVideo);
+
+  if (fromCollections && col) openCollectionPanel(col, '', 'collections');
 }
 
 function setBackVisible(visible) {
@@ -2041,10 +2141,10 @@ function renderCollections() {
     card.appendChild(main);
     card.appendChild(arrow);
 
+    // 点开合集只显示该合集的选集列表，不直接跳进播放；
+    // 在列表里选一集后，返回路径才是「播放 → 合集列表 → 我的」。
     card.addEventListener('click', () => {
-      pageCollections.hidden = true;
-      switchTab('home');
-      enterCollection(col, 0);
+      openCollectionPanel(col, '', 'collections');
     });
     collectionsList.appendChild(card);
   });
