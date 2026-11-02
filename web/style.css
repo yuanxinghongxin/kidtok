@@ -733,46 +733,6 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
-/* ============ 静音按钮 ============ */
-
-/* 固定在左侧、顶部导航下方（不放在视频内部）；safe-area 让刘海屏/状态栏下也不被遮挡。
-   注意不能放在导航那一行里：会和「关注/推荐」挤在一起，看着像第三个导航项 */
-.mute-btn {
-  position: absolute;
-  left: calc(15px + env(safe-area-inset-left));
-  top: calc(68px + env(safe-area-inset-top));
-  z-index: 15;
-  /* 用 flex 居中而不是 grid：grid 的隐式轨会撑满内容盒，手机端字号被系统放大时
-     图标的 1em 尺寸会漂，看上去就偏出圆心 */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  color: rgba(255, 255, 255, 0.92);
-  font-size: 15px;
-  border: 0;
-  border-radius: 50%;
-  /* 半透明黑底：小圆点，不抢画面 */
-  background: rgba(0, 0, 0, 0.35);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-/* 图标尺寸固定成 px：不跟 font-size 走，避免手机系统调大字号后图标被撑大、偏出圆心 */
-.mute-btn .ico {
-  width: 18px;
-  height: 18px;
-  vertical-align: 0;
-}
-
-.mute-btn:active {
-  background: rgba(0, 0, 0, 0.5);
-}
-
 /* ============ 双击点赞动画层 ============ */
 
 .heart-layer {

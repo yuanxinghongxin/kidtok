@@ -74,10 +74,6 @@ const ICONS = {
     '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z"/></svg>',
   play:
     '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.6v12.8l11-6.4z"/></svg>',
-  volumeOn:
-    '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 9.1h3.2L9.7 5.8v12.4L5.7 15H2.5z"/><path d="M13.38 9.3a3.6 3.6 0 0 1 0 5.4M17.84 6.7a6.4 6.4 0 0 1 0 10.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
-  volumeMute:
-    '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 9.1h3.2L9.7 5.8v12.4L5.7 15H2.5z"/><path d="m12.6 8.5 7.8 7m0-7-7.8 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   eye:
     '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4 12S5.7 6.2 12 6.2 21.6 12 21.6 12 18.3 17.8 12 17.8 2.4 12 2.4 12z"/><circle cx="12" cy="12" r="2.7"/></svg>',
   eyeOff:
@@ -89,7 +85,6 @@ const params = new URLSearchParams(location.search);
 let currentDir = params.get('path') || DEFAULT_DIR;
 
 const feedEl = document.getElementById('feed');
-const muteBtn = document.getElementById('mute-btn');
 const heartLayer = document.getElementById('heart-layer');
 const pageHome = document.getElementById('page-home');
 const pageMe = document.getElementById('page-me');
@@ -110,9 +105,6 @@ const drawerClose = document.getElementById('drawer-close');
 const meSettingsBtn = document.getElementById('me-settings-btn');
 const clearCacheBtn = document.getElementById('clear-cache-btn');
 const aboutBtn = document.getElementById('about-btn');
-const defaultMuteRow = document.getElementById('default-mute-row');
-const defaultMuteSwitch = document.getElementById('default-mute-switch');
-const defaultMuteSub = document.getElementById('default-mute-sub');
 const pageConfig = document.getElementById('page-config');
 const cfgForm = document.getElementById('cfg-form');
 const cfgBack = document.getElementById('cfg-back');
@@ -145,25 +137,6 @@ const preloadValueEl = document.getElementById('preload-value');
 const preloadMinus = document.getElementById('preload-minus');
 const preloadPlus = document.getElementById('preload-plus');
 
-// 默认静音偏好：存在 localStorage，重开 App 仍生效。默认「否」＝不静音
-const DEFAULT_MUTE_KEY = 'qimeng.defaultMuted';
-
-function readDefaultMuted() {
-  try {
-    return localStorage.getItem(DEFAULT_MUTE_KEY) === '1';
-  } catch (err) {
-    return false;
-  }
-}
-
-function saveDefaultMuted(value) {
-  try {
-    localStorage.setItem(DEFAULT_MUTE_KEY, value ? '1' : '0');
-  } catch (err) {
-    // 隐私模式等不可写时忽略：只是不持久化，本次运行仍然生效
-  }
-}
-
 // 预加载数量偏好：当前屏之后同时准备几屏（默认 1，和以前的行为一致）。
 // 数值越大切到下一屏越快，但并发请求更多、更费流量与网盘调用。
 const PRELOAD_KEY = 'qimeng.preloadCount';
@@ -192,9 +165,7 @@ function savePreloadCount(value) {
 
 let preloadCount = readPreloadCount();
 
-// 当前是否静音；启动时按用户设置决定（默认不静音）
-let muted = readDefaultMuted();
-let defaultMuted = muted;
+// 声音始终开启；只有浏览器「手势之前不许有声自动播放」策略会临时静音
 let activeSlide = null;
 // 预读白名单：当前屏 + 后面 preloadCount 屏持有 src，其余一律释放
 let preloadSlides = new Set();
@@ -719,7 +690,7 @@ function buildSlide(item, index) {
 
   const video = document.createElement('video');
   video.className = 'player';
-  video.muted = muted;
+  video.muted = !hadGesture && needsGestureForAudio;
   video.loop = true;
   video.playsInline = true;
   video.preload = 'none';
@@ -750,7 +721,7 @@ function buildSlide(item, index) {
   video.addEventListener('playing', markPainted);
   // iOS 上「起播成功但没声音」很常见：画面一出来，借最近这次手势补开音频通道
   video.addEventListener('playing', () => {
-    if (!muted && isIOS && !video.muted) ensureAudible(slide);
+    if (isIOS && !video.muted) ensureAudible(slide);
   });
   // 暂停态只由视频自身的 play/pause 事件驱动，保证图标和真实播放状态永远一致
   video.addEventListener('pause', () => slide.classList.add('paused'));
@@ -924,7 +895,7 @@ const needsGestureForAudio =
 //   2. 起播之后自动重试最多 2 次：滑动刚结束时通常还在手势有效期内。
 // 没解锁成功的屏，下一次手势会再补一次，不会一直静音。
 function unlockAudio(video) {
-  if (!video || muted || video._userPaused) return;
+  if (!video || video._userPaused) return;
   if (!video._player && !video.src) return;
   if (video.paused) {
     playVideo(video); // 还没起播：直接在手势里起播，有声
@@ -955,7 +926,7 @@ function nearestSlide() {
 function ensureAudible(slide) {
   const target = slide || activeSlide;
   if (!target || target.dataset.active !== '1') return;
-  if (muted || !isIOS || !hadGesture || target._audioUnlocked) return;
+  if (!isIOS || !hadGesture || target._audioUnlocked) return;
   const video = target.querySelector('video');
   if (!video || (!video._player && !video.src) || video._userPaused) return;
   video._audioTries = (video._audioTries || 0) + 1;
@@ -1000,14 +971,14 @@ function playVideo(video) {
   if (!video._player && !video.src) return;
   video._userPaused = false;
 
-  if (!hadGesture && !muted && needsGestureForAudio) {
+  if (!hadGesture && needsGestureForAudio) {
     // 手势之前的有声自动播放一定会被拦，直接静音起播并标记，等手势再还声音
     video.muted = true;
     video._policyMuted = true;
   } else if (video._policyMuted) {
     // 之前临时静音过的：先把声音设置还回去（手势内能直接有声，否则会再被拦一次）
     video._policyMuted = false;
-    video.muted = muted;
+    video.muted = false;
   }
 
   tryStartVideo(video).catch(() => {
@@ -1031,23 +1002,7 @@ function revertToMuted(video) {
   tryStartVideo(video).catch(() => {});
 }
 
-// 给某一屏设置声音；刚取消「策略静音」且本来在播放的，要走 restoreAudio 重开音频通道。
-// 已经在暂停的屏（预读/滑走的屏）只改 muted，不主动起播，避免后台偷偷出声。
-function applyMute(video, next) {
-  if (next) {
-    video._policyMuted = false;
-    video.muted = true;
-    return;
-  }
-  if (video._policyMuted && !video.paused) {
-    restoreAudio(video);
-    return;
-  }
-  video._policyMuted = false;
-  video.muted = false;
-}
-
-// 每次用户触摸/按键都检查一遍当前屏：把「策略静音」的视频恢复成用户设置的声音。
+// 每次用户触摸/按键都检查一遍当前屏，把「策略静音」的视频恢复成有声。
 // 不能只做一次——自动播放被拦的回调是异步的，常常在用户第一次触摸之后才到达。
 // 用 touchend / click：iOS 只认这两级用户手势，touchstart 不算。
 // 手势必须落在首页的视频区域里才操作播放：在「我的」、抽屉、合集面板上点按，
@@ -1070,7 +1025,7 @@ function onUserGesture(event) {
     const video = activeSlide.querySelector('video');
     if (video && video.paused) playVideo(video);
   }
-  if (muted || !activeSlide) return;
+  if (!activeSlide) return;
   if (isIOS) {
     // 手势这一拍里解锁当前屏；滑动时顺手解锁即将到位的那一屏
     unlockSlide(activeSlide);
@@ -1091,26 +1046,6 @@ function pauseVideo(video) {
   } else if (!video.paused) {
     video.pause();
   }
-}
-
-function setMuted(next) {
-  muted = next;
-  muteBtn.classList.toggle('is-muted', muted);
-  muteBtn.innerHTML = muted ? ICONS.volumeMute : ICONS.volumeOn;
-  feedEl.querySelectorAll('video').forEach((video) => {
-    // 主动开声音时同样要复查：个别 WebView 会因取消静音把视频暂停
-    applyMute(video, muted);
-  });
-}
-
-// 设置页「是否默认静音」：写偏好 + 同步开关显示 + 立刻作用到当前视频
-function applyDefaultMuted(value) {
-  defaultMuted = value;
-  saveDefaultMuted(value);
-  defaultMuteSwitch.classList.toggle('on', value);
-  defaultMuteRow.setAttribute('aria-pressed', value ? 'true' : 'false');
-  defaultMuteSub.textContent = value ? '开：每次打开先静音' : '关：打开即有声';
-  setMuted(value);
 }
 
 // 高级设置「预加载数量」：写偏好 + 同步显示 + 立刻按新数量补齐或收回预读
@@ -1703,7 +1638,7 @@ function activate(slide) {
   if (isIOS) {
     slide._audioUnlocked = false;
     video._audioTries = 0;
-    if (!muted && hadGesture) {
+    if (hadGesture) {
       clearTimeout(slide._audibleTimer);
       slide._audibleTimer = setTimeout(() => {
         if (slide.dataset.active === '1') ensureAudible(slide);
@@ -3066,13 +3001,6 @@ clearCacheBtn.addEventListener('click', () => {
 });
 aboutBtn.addEventListener('click', () => showToast('启蒙短视频 v1.0'));
 cfgBack.addEventListener('click', closeConfigPage);
-
-// 启动时把保存的偏好同步到静音按钮、设置页开关和之后创建的所有视频
-applyDefaultMuted(defaultMuted);
-
-// 整行都可点：点一下切换「是否默认静音」，立刻生效并记住
-defaultMuteRow.addEventListener('click', () => applyDefaultMuted(!defaultMuted));
-muteBtn.addEventListener('click', () => setMuted(!muted));
 
 // 作品 / 私密 / 喜欢：切换高亮（个人页只是标签样式）
 meTabs.forEach((tab) =>
