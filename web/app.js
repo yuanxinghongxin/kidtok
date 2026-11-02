@@ -748,6 +748,10 @@ function buildSlide(item, index) {
     if (coverImg) saveLastCover(coverImg.getAttribute('src'));
   };
   video.addEventListener('playing', markPainted);
+  // iOS 上「起播成功但没声音」很常见：画面一出来，借最近这次手势补开音频通道
+  video.addEventListener('playing', () => {
+    if (!muted && isIOS && !video.muted) ensureAudible(slide);
+  });
   // 暂停态只由视频自身的 play/pause 事件驱动，保证图标和真实播放状态永远一致
   video.addEventListener('pause', () => slide.classList.add('paused'));
   video.addEventListener('play', () => slide.classList.remove('paused'));
@@ -905,11 +909,33 @@ let pendingGesturePlay = false; // 连静音自动播放都被拦，等用户触
 // 等下一次手势再还声音。不能依赖 play() 被拒的异步回调——它常常晚于用户手势到达，
 // 只挂一次性监听就会永远等不到第二次手势，表现就是「一直静音」。
 let hadGesture = false;
-const needsGestureForAudio =
+const isIOS =
   /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const needsGestureForAudio =
+  isIOS ||
   window.matchMedia('(display-mode: standalone)').matches ||
   window.navigator.standalone === true;
+
+// iOS 的 WebKit 只认「用户手势里发起的播放」有声：滑过去的新视频即使 muted=false
+// 也常常是静的（左上角图标显示有声音），用户实测「点一下暂停再播放」才会出声。
+// 所以每次手势、以及新视频起播后，都对当前屏补一次「暂停 → 取消静音 → 播放」。
+// 每个视频只补一次：补成功就打上 _audioOn，补失败会退回静音并清掉标记，
+// 下一次手势或下一次起播再重试。
+function ensureAudible(target) {
+  const slide = target || activeSlide;
+  if (!slide || slide.dataset.active !== '1') return;
+  if (muted || !isIOS || !hadGesture) return;
+  const video = slide.querySelector('video');
+  if (!video || video._audioOn) return;
+  if (!video._player && !video.src) return;
+  if (video.paused) {
+    video._audioOn = true; // 就在这次手势里起播，直接有声
+    playVideo(video);
+    return;
+  }
+  restoreAudio(video); // 已在播但没声音：重播一次打开音频通道
+}
 
 // 借一次用户手势把「策略静音」的视频恢复成有声。
 // iOS 独立窗口里光把 muted 改成 false 往往仍然没声音（音频通道没打开），
@@ -917,6 +943,7 @@ const needsGestureForAudio =
 function restoreAudio(video) {
   const wasPlaying = !video.paused;
   video._policyMuted = false;
+  video._audioOn = true;
   video.muted = false;
   // 已在播的先暂停：紧接着的 play() 才会重新打开音频通道
   if (wasPlaying) pauseVideo(video);
@@ -974,6 +1001,7 @@ function revertToMuted(video) {
   if (video._policyMuted) return;
   video._policyMuted = true;
   video.muted = true;
+  video._audioOn = false; // 没补成功，下次手势再试
   tryStartVideo(video).catch(() => {});
 }
 
@@ -1004,8 +1032,7 @@ function onUserGesture() {
     if (video && video.paused) playVideo(video);
   }
   if (muted || !activeSlide) return;
-  const video = activeSlide.querySelector('video');
-  if (video && video._policyMuted) restoreAudio(video);
+  ensureAudible();
 }
 
 ['touchend', 'click', 'keydown'].forEach((type) =>
@@ -1624,6 +1651,13 @@ function activate(slide) {
   slide.dataset.active = '1';
   prepareSlide(slide);
   playVideo(video);
+  // 新屏起播后再补一次有声检查：滑动刚结束，这时通常还在手势有效期内
+  if (isIOS && !muted && hadGesture) {
+    clearTimeout(slide._audibleTimer);
+    slide._audibleTimer = setTimeout(() => {
+      if (slide.dataset.active === '1') ensureAudible(slide);
+    }, 400);
+  }
   preloadNext();
 }
 
