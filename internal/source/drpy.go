@@ -69,7 +69,10 @@ type drpyListResp struct {
 	Code  int         `json:"code"`
 	Msg   string      `json:"msg"`
 	Total int         `json:"total"`
-	List  []DrpyVideo `json:"list"`
+	// 部分源只给总页数和每页条数，此时用 pagecount*limit 还原总数。
+	PageCount int         `json:"pagecount"`
+	Limit     int         `json:"limit"`
+	List      []DrpyVideo `json:"list"`
 }
 
 // drpyDetailResp 是 ?ac=detail 的响应外层。
@@ -198,7 +201,7 @@ func (d *Drpy) Categories(ctx context.Context) ([]DrpyCategory, error) {
 }
 
 // CategoryVideos 拉取某个栏目的第一页数据（?ac=category&t=栏目ID）。
-func (d *Drpy) CategoryVideos(ctx context.Context, categoryID string) ([]DrpyVideo, error) {
+func (d *Drpy) CategoryVideos(ctx context.Context, categoryID string) ([]DrpyVideo, int, error) {
 	return d.CategoryVideosPage(ctx, categoryID, 1)
 }
 
@@ -213,7 +216,7 @@ func (d *Drpy) AllCategoryVideos(ctx context.Context, categoryID string) ([]Drpy
 	seen := make(map[string]bool)
 
 	for page := 1; page <= drpyMaxAllPages; page++ {
-		videos, err := d.CategoryVideosPage(ctx, categoryID, page)
+		videos, _, err := d.CategoryVideosPage(ctx, categoryID, page)
 		if err != nil {
 			// 第一页就失败说明栏目不可用；后续页失败时把已拿到的部分返回，
 			// 让面板仍然能展示内容（比如第 20 页偶发超时）。
@@ -241,11 +244,12 @@ func (d *Drpy) AllCategoryVideos(ctx context.Context, categoryID string) ([]Drpy
 	return all, nil
 }
 
-// CategoryVideosPage 拉取栏目指定页（pg=1 时可省略），供 AllCategoryVideos 逐页遍历。
-func (d *Drpy) CategoryVideosPage(ctx context.Context, categoryID string, page int) ([]DrpyVideo, error) {
+// CategoryVideosPage 拉取栏目第 page 页，并返回源声明的真实总条数。
+// drpy 通常返回 total；只给 pagecount/limit 的源用二者相乘还原。
+func (d *Drpy) CategoryVideosPage(ctx context.Context, categoryID string, page int) ([]DrpyVideo, int, error) {
 	categoryID = strings.TrimSpace(categoryID)
 	if categoryID == "" {
-		return nil, errors.New("栏目 ID 不能为空")
+		return nil, 0, errors.New("栏目 ID 不能为空")
 	}
 
 	params := url.Values{"t": {categoryID}}
@@ -255,21 +259,26 @@ func (d *Drpy) CategoryVideosPage(ctx context.Context, categoryID string, page i
 
 	endpoint, err := d.endpoint("category", params)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	body, err := d.get(ctx, endpoint)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var resp drpyListResp
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("解析栏目响应失败: %w（响应片段: %s）", err, snippet(body))
+		return nil, 0, fmt.Errorf("解析栏目响应失败: %w（响应片段: %s）", err, snippet(body))
 	}
 	if resp.Code != 0 && resp.Code != 1 && resp.Msg != "" {
-		return nil, fmt.Errorf("栏目接口返回错误（code=%d）: %s", resp.Code, resp.Msg)
+		return nil, 0, fmt.Errorf("栏目接口返回错误（code=%d）: %s", resp.Code, resp.Msg)
 	}
-	return normalizeVideos(resp.List), nil
+
+	total := resp.Total
+	if total <= 0 && resp.PageCount > 0 && resp.Limit > 0 {
+		total = resp.PageCount * resp.Limit
+	}
+	return normalizeVideos(resp.List), total, nil
 }
 
 // normalizeVideos 去掉脏数据并 trim 字段，搜索与栏目接口共用。

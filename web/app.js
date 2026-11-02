@@ -1924,7 +1924,8 @@ function renderPlaylist(col, current) {
   sheetTitle.textContent = col.name;
   // 分季合集：副标题带上总季数，单季合集带上季名
   const seasonTotal = col.seasonTotal || 0;
-  let sub = '共 ' + col.episodes.length + ' 集';
+  // 面板还没拉全时也要显示后端给的真实总数，不能按已加载条数算
+  let sub = '共 ' + (col.totalCount || col.episodes.length) + ' 集';
   if (seasonTotal > 1) {
     sub += ' · ' + seasonTotal + ' 季';
   } else if (seasonTotal === 1 && col.episodes[0] && col.episodes[0].season) {
@@ -2067,7 +2068,8 @@ async function openCategorySheet(col, currentPath, slide) {
 
   try {
     const items = await loadCategoryAll(col.categoryId, col.sourceId);
-    col.totalCount = items.length;
+    // 后端 /api/feed 已给真实总数时保持不变，只有没拿到时才按拉全的条数兜底
+    if (!col.totalCount) col.totalCount = items.length;
     let current = -1;
     if (currentPath) {
       current = items.findIndex((item) => item.path === currentPath);
@@ -2138,7 +2140,7 @@ function playCategoryItem(col, item, items, index) {
   // 从「我的 · 收录合集」进来的：把整个栏目当作连播列表，
   // 返回时才能先回到这个合集，再回到我的页面。
   if (sheetOrigin === 'collections') {
-    col.totalCount = items.length;
+    if (!col.totalCount) col.totalCount = items.length;
     enterCollection(
       col,
       index,
@@ -2180,7 +2182,7 @@ function playCategoryItem(col, item, items, index) {
     seasonCount: 0,
     seasonTotal: col.seasonTotal || 0,
   };
-  col.totalCount = items.length;
+  if (!col.totalCount) col.totalCount = items.length;
   // 插到当前播放的下一屏：看完这条继续往下滑，仍然是原来的信息流
   const pos = Math.min(currentPlayIndex + 1, dataSource.length);
   dataSource.splice(pos, 0, ep);
@@ -3361,6 +3363,9 @@ async function boot() {
       const built = buildEpisodes(group.items, col.id);
       col.episodes = built.episodes;
       col.seasonTotal = built.seasonTotal;
+      // 首页只加载了每个栏目的前几条，真实总集数来自后端 total_count，
+      // 不能拿 group.items.length 当总数（否则会显示「共 4 集」而实际是 12 集）
+      col.totalCount = group.items.reduce((max, item) => Math.max(max, item.total_count || 0), 0);
       collections.push(col);
       colIndex += 1;
     });

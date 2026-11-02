@@ -30,6 +30,9 @@ type FeedItem struct {
 	// 前端用源 ID 去请求该栏目的全部视频，显示时用源名区分同名栏目。
 	SourceID   string `json:"source_id,omitempty"`
 	SourceName string `json:"source_name,omitempty"`
+	// TotalCount 是该合集（在线栏目 / 网盘文件夹）的真实总条数。
+	// 首页为了性能只取前几条，前端用这个值显示「共 N 集」，不能按已加载条数算。
+	TotalCount int `json:"total_count,omitempty"`
 }
 
 // Feed 列出目录下的视频文件，按路径升序返回。
@@ -66,6 +69,9 @@ func (a *Alist) Feed(ctx context.Context, dir, password string) ([]FeedItem, err
 
 	if len(rootVideos) > 0 {
 		// 选中的目录本身就是一个视频合集：不再下钻
+		for i := range rootVideos {
+			rootVideos[i].TotalCount = len(rootVideos)
+		}
 		buckets = append(buckets, rootVideos)
 	} else {
 		// 每个一级子目录的扫描预算按目录数平均分，避免某个目录把全程预算吃光
@@ -82,6 +88,9 @@ func (a *Alist) Feed(ctx context.Context, dir, password string) ([]FeedItem, err
 				continue // 单个目录失败只跳过该目录，不拖垮整个 Feed
 			}
 			if len(videos) > 0 {
+				for i := range videos {
+					videos[i].TotalCount = len(videos)
+				}
 				buckets = append(buckets, videos)
 			}
 		}

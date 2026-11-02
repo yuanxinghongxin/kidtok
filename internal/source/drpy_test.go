@@ -173,7 +173,7 @@ func TestDrpyCategoryVideos(t *testing.T) {
 	defer srv.Close()
 
 	d := NewDrpy(srv.URL, "兔小贝[儿]", DrpyDefaultPwd, 5*time.Second)
-	videos, err := d.CategoryVideos(context.Background(), "2")
+	videos, _, err := d.CategoryVideos(context.Background(), "2")
 	if err != nil {
 		t.Fatalf("CategoryVideos 失败: %v", err)
 	}

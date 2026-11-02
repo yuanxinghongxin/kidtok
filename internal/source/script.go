@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,14 @@ type ScriptSource struct {
 	rule     *scriptRule
 	client   *http.Client
 	sourceID string
+	// 栏目真实总条数缓存：接口不返回 total 时靠翻页探测得到，探测一次缓存半小时
+	totalMu sync.Mutex
+	totals  map[string]scriptTotal
+}
+
+type scriptTotal struct {
+	total int
+	at    time.Time
 }
 
 type scriptRule struct {
@@ -108,19 +117,59 @@ func (s *ScriptSource) FeedCategories(ctx context.Context, ids []string) ([]Feed
 	limit := feedPerCategoryCount(len(ids))
 	all := make([]FeedItem, 0, limit*len(ids))
 	var firstErr error
+
+	// 栏目并发拉取：接口不返回总数时还要翻页探测，串行会明显拖慢首页
+	ctx, cancel := context.WithTimeout(ctx, feedSourceTimeout)
+	defer cancel()
+	type result struct {
+		items []FeedItem
+		err   error
+	}
+	results := make(chan result, len(ids))
+	sem := make(chan struct{}, feedCategoryWorkers)
+	var wg sync.WaitGroup
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
 		if id == "" {
 			continue
 		}
-		videos, err := s.categoryPage(ctx, id, 1)
-		if err != nil {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results <- result{err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+
+			videos, total, err := s.categoryPage(ctx, id, 1)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			// 接口不返回 total 的源（如兔小贝）用翻页探测算真实总条数，
+			// 否则前端只能按已加载的 30 条显示「共 30 集」
+			if total <= 0 {
+				total = s.discoverTotal(ctx, id, len(videos))
+			}
+			results <- result{items: capFeedItems(s.toFeedItems(videos, id, names[id], total), limit)}
+		}(id)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for r := range results {
+		if r.err != nil {
 			if firstErr == nil {
-				firstErr = err
+				firstErr = r.err
 			}
 			continue
 		}
-		all = append(all, capFeedItems(s.toFeedItems(videos, id, names[id]), limit)...)
+		all = append(all, r.items...)
 	}
 	if len(all) == 0 {
 		if firstErr != nil {
@@ -150,13 +199,17 @@ func (s *ScriptSource) AllFeedItems(ctx context.Context, categoryID string) ([]F
 
 	all := make([]scriptVideo, 0, 60)
 	seen := make(map[string]bool)
+	total := 0
 	for page := 1; page <= drpyMaxAllPages; page++ {
-		videos, err := s.categoryPage(ctx, categoryID, page)
+		videos, pageTotal, err := s.categoryPage(ctx, categoryID, page)
 		if err != nil {
 			if page == 1 {
 				return nil, err
 			}
 			break
+		}
+		if pageTotal > total {
+			total = pageTotal
 		}
 		added := 0
 		for _, v := range videos {
@@ -174,7 +227,11 @@ func (s *ScriptSource) AllFeedItems(ctx context.Context, categoryID string) ([]F
 	if len(all) == 0 {
 		return nil, errors.New("栏目没有返回任何视频")
 	}
-	return s.toFeedItems(all, categoryID, name), nil
+	if total <= 0 {
+		total = len(all)
+	}
+	s.storeTotal(categoryID, total)
+	return s.toFeedItems(all, categoryID, name, total), nil
 }
 
 // Resolve 打开详情页/详情接口，找出第一集可播放的媒体地址。
@@ -222,7 +279,7 @@ func (s *ScriptSource) Resolve(ctx context.Context, itemKey string) (*PlaySource
 // Invalidate 目前 JS 源不做直链缓存，留空以兼容视频流的 403 重试流程。
 func (s *ScriptSource) Invalidate(string) {}
 
-func (s *ScriptSource) toFeedItems(videos []scriptVideo, categoryID, categoryName string) []FeedItem {
+func (s *ScriptSource) toFeedItems(videos []scriptVideo, categoryID, categoryName string, total int) []FeedItem {
 	items := make([]FeedItem, 0, len(videos))
 	for _, v := range videos {
 		itemPath := OnlineItemPath(s.sourceID, v.ID)
@@ -233,6 +290,7 @@ func (s *ScriptSource) toFeedItems(videos []scriptVideo, categoryID, categoryNam
 			CategoryID: categoryID,
 			Category:   categoryName,
 			SourceID:   s.sourceID,
+			TotalCount: total,
 		})
 	}
 	return items
@@ -245,24 +303,197 @@ type scriptVideo struct {
 	Pic  string
 }
 
-// categoryPage 拉取某栏目第 page 页并解析出视频列表。
-func (s *ScriptSource) categoryPage(ctx context.Context, categoryID string, page int) ([]scriptVideo, error) {
+// categoryPage 拉取某栏目第 page 页并解析出视频列表，同时尽量带回真实总条数。
+func (s *ScriptSource) categoryPage(ctx context.Context, categoryID string, page int) ([]scriptVideo, int, error) {
 	if s.rule.URLTpl == "" {
-		return nil, errors.New("规则没有 url 列表模板")
+		return nil, 0, errors.New("规则没有 url 列表模板")
 	}
 	target := s.fillTemplate(s.rule.URLTpl, categoryID, page)
 	body, err := s.get(ctx, target)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
+	total := jsonTotal(body)
 	if videos := parseJSONVideos(body); len(videos) > 0 {
-		return videos, nil
+		return videos, total, nil
 	}
 	if videos := parseHTMLVideos(body); len(videos) > 0 {
-		return videos, nil
+		return videos, total, nil
 	}
-	return nil, fmt.Errorf("列表接口没有解析出视频（%s，响应片段: %s）", target, snippet(body))
+	// 合法 JSON 但没有条目 = 越界页（如兔小贝翻到最后一页返回空 items），
+	// 这是翻页探测判断结尾的依据，不能当作解析失败
+	if json.Valid(body) {
+		return nil, total, nil
+	}
+	return nil, 0, fmt.Errorf("列表接口没有解析出视频（%s，响应片段: %s）", target, snippet(body))
+}
+
+// jsonTotal 从列表响应里找真实总数（total / totalCount / count 等常见键）。
+// 找不到时返回 0，前端会退回按已加载条数展示，不会显示错误的数字。
+func jsonTotal(body []byte) int {
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return 0
+	}
+	return findTotal(v, 0)
+}
+
+var totalKeys = []string{"total", "totalcount", "total_count"}
+
+func findTotal(v any, depth int) int {
+	if depth > 4 {
+		return 0
+	}
+	switch val := v.(type) {
+	case map[string]any:
+		for _, key := range totalKeys {
+			for k, raw := range val {
+				if !strings.EqualFold(k, key) {
+					continue
+				}
+				if n := toInt(raw); n > 0 {
+					return n
+				}
+			}
+		}
+		// count 只认响应最外层，避免把某条视频的播放数/评论数当成总数
+		if depth <= 1 {
+			for k, raw := range val {
+				if strings.EqualFold(k, "count") {
+					if n := toInt(raw); n > 0 {
+						return n
+					}
+				}
+			}
+		}
+		for _, raw := range val {
+			if n := findTotal(raw, depth+1); n > 0 {
+				return n
+			}
+		}
+	case []any:
+		for _, raw := range val {
+			if n := findTotal(raw, depth+1); n > 0 {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+func toInt(raw any) int {
+	switch n := raw.(type) {
+	case float64:
+		return int(n)
+	case string:
+		if v, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+			return v
+		}
+	}
+	return 0
+}
+
+// scriptTotalTTL 是「翻页探测出来的总条数」缓存时长。
+const scriptTotalTTL = 30 * time.Minute
+
+// discoverTotal 在列表接口没有 total/pagecount 时，靠翻页探测真实总条数：
+// 先按 2、4、8… 指数翻页找到第一个空页，再二分定位最后一页，最后按
+// 「(最后一页-1) * 每页条数 + 最后一页条数」还原总数。
+// 探测最多十几次请求且整体限时 8 秒；失败返回 0，前端退回按已加载条数显示。
+func (s *ScriptSource) discoverTotal(ctx context.Context, categoryID string, pageSize int) int {
+	if pageSize <= 0 {
+		return 0
+	}
+	if total, ok := s.cachedTotal(categoryID); ok {
+		return total
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	probes := 0
+	lo, hi := 1, 0
+	counts := map[int]int{}
+	for step := 2; step <= 64 && probes < 10; step *= 2 {
+		if ctx.Err() != nil {
+			return 0
+		}
+		videos, _, err := s.categoryPage(ctx, categoryID, step)
+		if err != nil {
+			return 0
+		}
+		probes++
+		counts[step] = len(videos)
+		if len(videos) == 0 {
+			hi = step
+			break
+		}
+		lo = step
+		if len(videos) < pageSize {
+			// 这一页没满，就是最后一页
+			total := (step-1)*pageSize + len(videos)
+			s.storeTotal(categoryID, total)
+			return total
+		}
+	}
+	if hi == 0 {
+		hi = lo + 1
+	}
+	for hi-lo > 1 && probes < 16 {
+		mid := (lo + hi) / 2
+		if ctx.Err() != nil {
+			return 0
+		}
+		videos, _, err := s.categoryPage(ctx, categoryID, mid)
+		if err != nil {
+			return 0
+		}
+		probes++
+		counts[mid] = len(videos)
+		if len(videos) == 0 {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+
+	last, ok := counts[lo]
+	if !ok || last == 0 {
+		videos, _, err := s.categoryPage(ctx, categoryID, lo)
+		if err != nil {
+			return 0
+		}
+		last = len(videos)
+	}
+	if last <= 0 {
+		return 0
+	}
+	total := (lo-1)*pageSize + last
+	s.storeTotal(categoryID, total)
+	return total
+}
+
+func (s *ScriptSource) cachedTotal(categoryID string) (int, bool) {
+	s.totalMu.Lock()
+	defer s.totalMu.Unlock()
+	e, ok := s.totals[categoryID]
+	if !ok || time.Since(e.at) > scriptTotalTTL {
+		return 0, false
+	}
+	return e.total, true
+}
+
+func (s *ScriptSource) storeTotal(categoryID string, total int) {
+	if total <= 0 {
+		return
+	}
+	s.totalMu.Lock()
+	if s.totals == nil {
+		s.totals = make(map[string]scriptTotal)
+	}
+	s.totals[categoryID] = scriptTotal{total: total, at: time.Now()}
+	s.totalMu.Unlock()
 }
 
 // fillTemplate 把 drpy 规则模板里的占位符替换成实际值。

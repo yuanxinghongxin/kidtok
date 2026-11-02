@@ -40,6 +40,10 @@ type ubestkidVideo struct {
 type ubestkidResp struct {
 	Result struct {
 		Items []ubestkidVideo `json:"items"`
+		// count / totalCount 是栏目的真实总条数（二者不同时以 count 为准），
+		// 首页只取第一页时要靠它显示「共 N 集」。
+		Count      int `json:"count"`
+		TotalCount int `json:"totalCount"`
 	} `json:"result"`
 }
 
@@ -109,12 +113,12 @@ func (u *UbestkidSource) FeedCategories(ctx context.Context, ids []string) ([]Fe
 			}
 			defer func() { <-sem }()
 
-			videos, err := u.page(ctx, id, 1)
+			videos, total, err := u.page(ctx, id, 1)
 			if err != nil {
 				results <- result{err: err}
 				return
 			}
-			results <- result{items: capFeedItems(u.toFeedItems(videos, id, names[id]), limit)}
+			results <- result{items: capFeedItems(u.toFeedItems(videos, id, names[id], total), limit)}
 		}(id)
 	}
 	go func() {
@@ -159,13 +163,17 @@ func (u *UbestkidSource) AllFeedItems(ctx context.Context, categoryID string) ([
 
 	all := make([]ubestkidVideo, 0, 60)
 	seen := make(map[string]bool)
+	total := 0
 	for p := 1; p <= ubestkidMaxPage; p++ {
-		videos, err := u.page(ctx, categoryID, p)
+		videos, pageTotal, err := u.page(ctx, categoryID, p)
 		if err != nil {
 			if p == 1 {
 				return nil, err
 			}
 			break
+		}
+		if pageTotal > total {
+			total = pageTotal
 		}
 		added := 0
 		for _, v := range videos {
@@ -183,7 +191,7 @@ func (u *UbestkidSource) AllFeedItems(ctx context.Context, categoryID string) ([
 	if len(all) == 0 {
 		return nil, errors.New("栏目没有返回任何视频")
 	}
-	return u.toFeedItems(all, categoryID, name), nil
+	return u.toFeedItems(all, categoryID, name, total), nil
 }
 
 // Resolve 的条目键既可能是纯视频地址，也可能是 drpy 的 `url@@标题@@封面`。
@@ -205,7 +213,7 @@ func (u *UbestkidSource) Resolve(ctx context.Context, itemKey string) (*PlaySour
 
 func (u *UbestkidSource) Invalidate(string) {}
 
-func (u *UbestkidSource) toFeedItems(videos []ubestkidVideo, categoryID, categoryName string) []FeedItem {
+func (u *UbestkidSource) toFeedItems(videos []ubestkidVideo, categoryID, categoryName string, total int) []FeedItem {
 	items := make([]FeedItem, 0, len(videos))
 	for _, v := range videos {
 		if v.URL == "" {
@@ -218,13 +226,15 @@ func (u *UbestkidSource) toFeedItems(videos []ubestkidVideo, categoryID, categor
 			CategoryID: categoryID,
 			Category:   categoryName,
 			SourceID:   u.sourceID,
+			TotalCount: total,
 		})
 	}
 	return items
 }
 
 // page 取某栏目第 p 页。上游接口是 POST JSON，分页字段为 p。
-func (u *UbestkidSource) page(ctx context.Context, categoryID string, p int) ([]ubestkidVideo, error) {
+// 同时返回栏目真实总条数（count / totalCount），首页只取一页时也能显示正确的「共 N 集」。
+func (u *UbestkidSource) page(ctx context.Context, categoryID string, p int) ([]ubestkidVideo, int, error) {
 	var subcate any = categoryID
 	if n, err := strconv.Atoi(categoryID); err == nil {
 		subcate = n
@@ -240,13 +250,13 @@ func (u *UbestkidSource) page(ctx context.Context, categoryID string, p int) ([]
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("构造请求失败: %w", err)
+		return nil, 0, fmt.Errorf("构造请求失败: %w", err)
 	}
 
 	target := ubestkidListURL(u.rule)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("构造请求失败: %w", err)
+		return nil, 0, fmt.Errorf("构造请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	ua := u.rule.Headers["User-Agent"]
@@ -259,23 +269,27 @@ func (u *UbestkidSource) page(ctx context.Context, categoryID string, p int) ([]
 
 	resp, err := u.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("请求贝乐虎列表失败: %w", err)
+		return nil, 0, fmt.Errorf("请求贝乐虎列表失败: %w", err)
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
+		return nil, 0, fmt.Errorf("读取响应失败: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("贝乐虎列表返回状态码 %d（响应片段: %s）", resp.StatusCode, snippet(raw))
+		return nil, 0, fmt.Errorf("贝乐虎列表返回状态码 %d（响应片段: %s）", resp.StatusCode, snippet(raw))
 	}
 
 	var out ubestkidResp
 	if err := json.Unmarshal(unwrapJSONPBytes(raw), &out); err != nil {
-		return nil, fmt.Errorf("贝乐虎列表解析失败: %w（响应片段: %s）", err, snippet(raw))
+		return nil, 0, fmt.Errorf("贝乐虎列表解析失败: %w（响应片段: %s）", err, snippet(raw))
 	}
-	return out.Result.Items, nil
+	total := out.Result.Count
+	if total <= 0 {
+		total = out.Result.TotalCount
+	}
+	return out.Result.Items, total, nil
 }
 
 // ubestkidListURL 取规则 url 中 `#` 之前的部分，补成完整地址。

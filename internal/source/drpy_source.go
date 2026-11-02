@@ -104,7 +104,7 @@ func (s *DrpySource) searchFeed(ctx context.Context, keyword string) ([]FeedItem
 	if len(videos) == 0 {
 		return nil, fmt.Errorf("搜索「%s」没有结果", keyword)
 	}
-	return s.toFeedItems(videos, "", ""), nil
+	return s.toFeedItems(videos, "", "", len(videos)), nil
 }
 
 // categoryFeed 并发请求各栏目的第一页，合并成一个大切片后洗牌。
@@ -164,12 +164,12 @@ func (s *DrpySource) FeedCategories(ctx context.Context, ids []string) ([]FeedIt
 			}
 			defer func() { <-sem }()
 
-			videos, err := s.client.CategoryVideos(ctx, id)
+			videos, total, err := s.client.CategoryVideos(ctx, id)
 			if err != nil {
 				results <- result{id: id, err: err}
 				return
 			}
-			results <- result{id: id, items: capFeedItems(s.toFeedItems(videos, id, names[id]), limit)}
+			results <- result{id: id, items: capFeedItems(s.toFeedItems(videos, id, names[id], total), limit)}
 		}(id)
 	}
 	go func() {
@@ -224,12 +224,12 @@ func (s *DrpySource) AllFeedItems(ctx context.Context, categoryID string) ([]Fee
 			}
 		}
 	}
-	return s.toFeedItems(videos, categoryID, name), nil
+	return s.toFeedItems(videos, categoryID, name, len(videos)), nil
 }
 
 // toFeedItems 把 drpy 视频映射成通用 Feed 条目，并带上所属栏目。
 // 配了 sourceID 时路径会带源 ID，播放接口据此找到对应源实例。
-func (s *DrpySource) toFeedItems(videos []DrpyVideo, categoryID, categoryName string) []FeedItem {
+func (s *DrpySource) toFeedItems(videos []DrpyVideo, categoryID, categoryName string, total int) []FeedItem {
 	items := make([]FeedItem, 0, len(videos))
 	for _, v := range videos {
 		itemPath := DrpyItemPath(v.VodID)
@@ -243,6 +243,7 @@ func (s *DrpySource) toFeedItems(videos []DrpyVideo, categoryID, categoryName st
 			CategoryID: categoryID,
 			Category:   categoryName,
 			SourceID:   s.sourceID,
+			TotalCount: total,
 		})
 	}
 	return items
