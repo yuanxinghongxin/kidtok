@@ -105,7 +105,8 @@ func (s *ScriptSource) FeedCategories(ctx context.Context, ids []string) ([]Feed
 		names[c.ID] = c.Name
 	}
 
-	all := make([]FeedItem, 0, 120)
+	limit := feedPerCategoryCount(len(ids))
+	all := make([]FeedItem, 0, limit*len(ids))
 	var firstErr error
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
@@ -119,7 +120,7 @@ func (s *ScriptSource) FeedCategories(ctx context.Context, ids []string) ([]Feed
 			}
 			continue
 		}
-		all = append(all, s.toFeedItems(videos, id, names[id])...)
+		all = append(all, capFeedItems(s.toFeedItems(videos, id, names[id]), limit)...)
 	}
 	if len(all) == 0 {
 		if firstErr != nil {

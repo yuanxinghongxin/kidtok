@@ -153,6 +153,39 @@ func sourcesKey(list []config.SourceSettings) string {
 	return string(data)
 }
 
+// 首页混排的取数预算：勾选栏目越多，每个栏目只取越少的条目。
+// 目标总量约 120 屏，避免勾了 20+ 个栏目后首页直接变成上千个滑屏。
+const (
+	feedTotalTarget     = 120
+	feedPerCategoryMin  = 3
+	feedPerCategoryMax  = 30
+	feedCategoryWorkers = 6
+	feedSourceTimeout   = 12 * time.Second
+)
+
+// feedPerCategoryCount 按勾选栏目数算每个栏目取几条：少勾就多取，多勾就少取。
+func feedPerCategoryCount(categories int) int {
+	if categories <= 0 {
+		return feedPerCategoryMax
+	}
+	n := feedTotalTarget / categories
+	if n < feedPerCategoryMin {
+		n = feedPerCategoryMin
+	}
+	if n > feedPerCategoryMax {
+		n = feedPerCategoryMax
+	}
+	return n
+}
+
+// capFeedItems 截断单个栏目的结果，超出部分留给合集面板按需拉取。
+func capFeedItems(items []FeedItem, limit int) []FeedItem {
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
+}
+
 // MixedFeed 把全部已启用数据源的勾选栏目合并后随机打乱。
 // 网盘源按「基础视频路径」参与混排；没有任何在线源时保留原来按目录浏览的行为。
 func (s *Sources) MixedFeed(ctx context.Context, dir string) ([]FeedItem, error) {

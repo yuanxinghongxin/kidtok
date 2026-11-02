@@ -101,6 +101,8 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		Fail(w, http.StatusInternalServerError, CodeUpstreamErr, "配置已生效，但写入文件失败: "+err.Error())
 		return
 	}
+	// 勾选的栏目可能变了，清掉首页缓存，下一次 /api/feed 立即按新配置取数
+	h.invalidateFeedCache()
 
 	enabled := 0
 	for _, s := range settings.Sources {

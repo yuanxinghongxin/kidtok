@@ -140,7 +140,13 @@ func (s *DrpySource) FeedCategories(ctx context.Context, ids []string) ([]FeedIt
 		items []FeedItem
 		err   error
 	}
+	// 勾选栏目多时每个栏目只取前几条，首页总滑屏数不会跟着线性膨胀
+	limit := feedPerCategoryCount(len(ids))
+	// 整体预算 + 并发上限：不让几十个栏目同时打满上游，超时后返回已拿到的部分
+	ctx, cancel := context.WithTimeout(ctx, feedSourceTimeout)
+	defer cancel()
 	results := make(chan result, len(ids))
+	sem := make(chan struct{}, feedCategoryWorkers)
 	var wg sync.WaitGroup
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
@@ -150,12 +156,20 @@ func (s *DrpySource) FeedCategories(ctx context.Context, ids []string) ([]FeedIt
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results <- result{id: id, err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+
 			videos, err := s.client.CategoryVideos(ctx, id)
 			if err != nil {
 				results <- result{id: id, err: err}
 				return
 			}
-			results <- result{id: id, items: s.toFeedItems(videos, id, names[id])}
+			results <- result{id: id, items: capFeedItems(s.toFeedItems(videos, id, names[id]), limit)}
 		}(id)
 	}
 	go func() {

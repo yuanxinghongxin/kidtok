@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -79,21 +80,58 @@ func (u *UbestkidSource) FeedCategories(ctx context.Context, ids []string) ([]Fe
 		names[c.ID] = c.Name
 	}
 
-	all := make([]FeedItem, 0, 120)
-	var firstErr error
+	// 勾选栏目多时每个栏目只取前几条，首页总滑屏数不会跟着线性膨胀
+	limit := feedPerCategoryCount(len(ids))
+	// 并发上限 + 整体预算：栏目多时不再一个个串行等，也不会一次打满上游
+	ctx, cancel := context.WithTimeout(ctx, feedSourceTimeout)
+	defer cancel()
+
+	type result struct {
+		items []FeedItem
+		err   error
+	}
+	results := make(chan result, len(ids))
+	sem := make(chan struct{}, feedCategoryWorkers)
+	var wg sync.WaitGroup
 	for _, id := range ids {
 		id = strings.TrimSpace(id)
 		if id == "" {
 			continue
 		}
-		videos, err := u.page(ctx, id, 1)
-		if err != nil {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results <- result{err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+
+			videos, err := u.page(ctx, id, 1)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			results <- result{items: capFeedItems(u.toFeedItems(videos, id, names[id]), limit)}
+		}(id)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	all := make([]FeedItem, 0, limit*len(ids))
+	var firstErr error
+	for r := range results {
+		if r.err != nil {
 			if firstErr == nil {
-				firstErr = err
+				firstErr = r.err
 			}
 			continue
 		}
-		all = append(all, u.toFeedItems(videos, id, names[id])...)
+		all = append(all, r.items...)
 	}
 	if len(all) == 0 {
 		if firstErr != nil {

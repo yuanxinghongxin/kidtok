@@ -5,10 +5,22 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"qimeng-feed/internal/config"
 	"qimeng-feed/internal/source"
 )
+
+// feedCacheTTL 是首页 Feed 的内存缓存时长：勾选多个栏目时一次混排要打几十个上游请求，
+// 60 秒内重复刷新直接复用结果，避免来回滑动/切模式时反复把上游打满。
+const feedCacheTTL = 60 * time.Second
+
+type feedCacheEntry struct {
+	dir   string
+	at    time.Time
+	items []source.FeedItem
+}
 
 // Handler 持有依赖，供各接口方法使用。
 type Handler struct {
@@ -18,6 +30,9 @@ type Handler struct {
 	// sources 按 config.json 的最新内容提供默认源与各前缀对应的源，
 	// 保存配置后立即生效，不需要重启进程。
 	sources *source.Sources
+
+	feedMu    sync.Mutex
+	feedCache feedCacheEntry
 }
 
 // NewHandler 创建接口处理器。
@@ -85,13 +100,44 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		dir = h.store.GetAlist().BasePath
 	}
 
+	// 同一目录 60 秒内复用上一次的混排结果：勾选栏目多时一次混排很贵
+	if items, ok := h.cachedFeed(dir); ok {
+		OK(w, items)
+		return
+	}
+
 	items, err := h.sources.MixedFeed(r.Context(), dir)
 	if err != nil {
 		slog.Error("生成 Feed 失败", "path", dir, "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "生成 Feed 失败: "+err.Error())
 		return
 	}
+	h.cacheFeed(dir, items)
 	OK(w, items)
+}
+
+// cachedFeed 命中缓存时返回副本以外的只读切片；过期或目录不同都视为未命中。
+func (h *Handler) cachedFeed(dir string) ([]source.FeedItem, bool) {
+	h.feedMu.Lock()
+	defer h.feedMu.Unlock()
+	e := h.feedCache
+	if e.items == nil || e.dir != dir || time.Since(e.at) > feedCacheTTL {
+		return nil, false
+	}
+	return e.items, true
+}
+
+func (h *Handler) cacheFeed(dir string, items []source.FeedItem) {
+	h.feedMu.Lock()
+	h.feedCache = feedCacheEntry{dir: dir, at: time.Now(), items: items}
+	h.feedMu.Unlock()
+}
+
+// invalidateFeedCache 在配置保存后调用，让新的勾选栏目立刻生效。
+func (h *Handler) invalidateFeedCache() {
+	h.feedMu.Lock()
+	h.feedCache = feedCacheEntry{}
+	h.feedMu.Unlock()
 }
 
 // FeedAll 处理 GET /api/feed/all?source_id=xxx&category_id=yyy：
