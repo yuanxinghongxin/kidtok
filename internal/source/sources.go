@@ -172,6 +172,18 @@ func (s *Sources) MixedFeed(ctx context.Context, dir string) ([]FeedItem, error)
 		return s.alist.Feed(ctx, dir, "")
 	}
 
+	// 在线源一个栏目都没勾选、网盘也没参与时，直接告诉用户去勾栏目，
+	// 不要再逐个请求上游后报「都没有内容」。
+	selected := 0
+	for _, sc := range cfg.Sources {
+		if sc.Enabled && sc.Configured() && len(sc.Categories) > 0 {
+			selected++
+		}
+	}
+	if selected == 0 && !cfg.Alist.Included() {
+		return nil, errors.New("已启用的数据源都没有勾选栏目")
+	}
+
 	type result struct {
 		name  string
 		items []FeedItem

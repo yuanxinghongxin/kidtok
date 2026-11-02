@@ -60,7 +60,11 @@ func (o *OnlineSource) Categories(ctx context.Context) ([]DrpyCategory, error) {
 }
 
 // Feed 拉取该源勾选栏目的第一页，并给每条视频补上源信息。
+// 没有勾选任何栏目时返回空：不能默认拉第一个栏目，否则用户没选也会出内容。
 func (o *OnlineSource) Feed(ctx context.Context) ([]FeedItem, error) {
+	if len(o.cfg.Categories) == 0 {
+		return nil, nil
+	}
 	var (
 		items []FeedItem
 		err   error
