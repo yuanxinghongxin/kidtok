@@ -17,6 +17,7 @@ type OnlineSource struct {
 	cfg    config.SourceSettings
 	drpy   *DrpySource
 	script *ScriptSource
+	ubest  *UbestkidSource
 }
 
 // newOnlineSource 按配置创建在线源实例。
@@ -32,6 +33,15 @@ func newOnlineSource(cfg config.SourceSettings, timeout time.Duration) (*OnlineS
 		s, err := NewScriptSource(cfg.Script, timeout)
 		if err != nil {
 			return nil, err
+		}
+		if isUbestkidHost(s.rule.Host) {
+			// 贝乐虎规则全是自定义函数，走内置直连实现。
+			u, err := NewUbestkidSource(s.rule, timeout)
+			if err != nil {
+				return nil, err
+			}
+			u.SetSourceID(cfg.ID)
+			return &OnlineSource{cfg: cfg, ubest: u}, nil
 		}
 		s.SetSourceID(cfg.ID)
 		return &OnlineSource{cfg: cfg, script: s}, nil
@@ -53,6 +63,9 @@ func (o *OnlineSource) Name() string {
 
 // Categories 返回该源的全部栏目。
 func (o *OnlineSource) Categories(ctx context.Context) ([]DrpyCategory, error) {
+	if o.ubest != nil {
+		return o.ubest.Categories(ctx)
+	}
 	if o.drpy != nil {
 		return o.drpy.Categories(ctx)
 	}
@@ -69,9 +82,12 @@ func (o *OnlineSource) Feed(ctx context.Context) ([]FeedItem, error) {
 		items []FeedItem
 		err   error
 	)
-	if o.drpy != nil {
+	switch {
+	case o.ubest != nil:
+		items, err = o.ubest.FeedCategories(ctx, o.cfg.Categories)
+	case o.drpy != nil:
 		items, err = o.drpy.FeedCategories(ctx, o.cfg.Categories)
-	} else {
+	default:
 		items, err = o.script.FeedCategories(ctx, o.cfg.Categories)
 	}
 	if err != nil {
@@ -95,9 +111,12 @@ func (o *OnlineSource) AllFeedItems(ctx context.Context, categoryID string) ([]F
 		items []FeedItem
 		err   error
 	)
-	if o.drpy != nil {
+	switch {
+	case o.ubest != nil:
+		items, err = o.ubest.AllFeedItems(ctx, categoryID)
+	case o.drpy != nil:
 		items, err = o.drpy.AllFeedItems(ctx, categoryID)
-	} else {
+	default:
 		items, err = o.script.AllFeedItems(ctx, categoryID)
 	}
 	if err != nil {
@@ -116,6 +135,9 @@ func (o *OnlineSource) AllFeedItems(ctx context.Context, categoryID string) ([]F
 
 // Resolve 把条目键解析成可播放的上游地址。
 func (o *OnlineSource) Resolve(ctx context.Context, itemKey string) (*PlaySource, error) {
+	if o.ubest != nil {
+		return o.ubest.Resolve(ctx, itemKey)
+	}
 	if o.drpy != nil {
 		return o.drpy.Resolve(ctx, DrpyItemPath(itemKey), "")
 	}
@@ -124,6 +146,10 @@ func (o *OnlineSource) Resolve(ctx context.Context, itemKey string) (*PlaySource
 
 // Invalidate 丢掉某个条目的直链缓存，供上游 403 时刷新重试。
 func (o *OnlineSource) Invalidate(itemKey string) {
+	if o.ubest != nil {
+		o.ubest.Invalidate(itemKey)
+		return
+	}
 	if o.drpy != nil {
 		o.drpy.Invalidate(context.Background(), DrpyItemPath(itemKey))
 		return

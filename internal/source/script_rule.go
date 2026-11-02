@@ -1,7 +1,12 @@
 package source
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,6 +55,10 @@ func parseScriptRule(script string) (*scriptRule, error) {
 	if len(r.Classes) == 0 {
 		r.Classes = parseJSClassLists(jsString(script, "class_name"), jsString(script, "class_url"))
 	}
+	// 部分规则（如贝乐虎）把栏目放在 class_parse 的 ungzip('base64') 里。
+	if len(r.Classes) == 0 {
+		r.Classes = parseUngzipClasses(script)
+	}
 
 	// 函数型规则无法在 Go 里执行。
 	for _, key := range []string{"一级", "二级", "搜索", "推荐", "播放", "class_parse_func"} {
@@ -64,7 +73,8 @@ func parseScriptRule(script string) (*scriptRule, error) {
 		r.HasFuncRule = true
 	}
 
-	if r.HasFuncRule {
+	// 函数型规则无法在 Go 里执行；贝乐虎这类已内置直连的源除外。
+	if r.HasFuncRule && !isUbestkidHost(r.Host) {
 		return nil, fmt.Errorf("该规则包含自定义 JS 函数（一级/二级/搜索/播放），当前内置解析器暂不支持；请改用 drpy-node 源")
 	}
 	if r.Host == "" {
@@ -244,6 +254,8 @@ func expandJSHeaderValue(v string) string {
 	switch strings.ToUpper(strings.TrimSpace(v)) {
 	case "MOBILE_UA":
 		return drpyUA
+	case "IOS_UA":
+		return iosUA
 	case "PC_UA":
 		return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 	default:
@@ -306,4 +318,52 @@ func splitList(s string) []string {
 		return strings.Split(s, "&")
 	}
 	return strings.Split(s, ",")
+}
+
+// jsUngzipRe 匹配规则里的 ungzip('base64') 栏目数据。
+var jsUngzipRe = regexp.MustCompile(`ungzip\(\s*['"]([A-Za-z0-9+/=]+)['"]\s*\)`)
+
+type ungzipClass struct {
+	TypeID   json.Number `json:"type_id"`
+	TypeName string      `json:"type_name"`
+}
+
+// parseUngzipClasses 解码 class_parse 里的 gzip+base64 栏目 JSON。
+func parseUngzipClasses(script string) []DrpyCategory {
+	m := jsUngzipRe.FindStringSubmatch(script)
+	if len(m) < 2 {
+		return nil
+	}
+	packed, err := base64.StdEncoding.DecodeString(m[1])
+	if err != nil {
+		return nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(packed))
+	if err != nil {
+		return nil
+	}
+	defer zr.Close()
+
+	data, err := io.ReadAll(io.LimitReader(zr, 4<<20))
+	if err != nil {
+		return nil
+	}
+	var list []ungzipClass
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil
+	}
+
+	cats := make([]DrpyCategory, 0, len(list))
+	for _, c := range list {
+		id := strings.TrimSpace(c.TypeID.String())
+		if id == "" {
+			continue
+		}
+		name := strings.TrimSpace(c.TypeName)
+		if name == "" {
+			name = id
+		}
+		cats = append(cats, DrpyCategory{ID: id, Name: name})
+	}
+	return cats
 }
