@@ -74,6 +74,10 @@ const ICONS = {
     '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z"/></svg>',
   play:
     '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.6v12.8l11-6.4z"/></svg>',
+  volumeOn:
+    '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 9.1h3.2L9.7 5.8v12.4L5.7 15H2.5z"/><path d="M13.38 9.3a3.6 3.6 0 0 1 0 5.4M17.84 6.7a6.4 6.4 0 0 1 0 10.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  volumeMute:
+    '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M2.5 9.1h3.2L9.7 5.8v12.4L5.7 15H2.5z"/><path d="m12.6 8.5 7.8 7m0-7-7.8 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
   eye:
     '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.4 12S5.7 6.2 12 6.2 21.6 12 21.6 12 18.3 17.8 12 17.8 2.4 12 2.4 12z"/><circle cx="12" cy="12" r="2.7"/></svg>',
   eyeOff:
@@ -85,6 +89,7 @@ const params = new URLSearchParams(location.search);
 let currentDir = params.get('path') || DEFAULT_DIR;
 
 const feedEl = document.getElementById('feed');
+const muteBtn = document.getElementById('mute-btn');
 const heartLayer = document.getElementById('heart-layer');
 const pageHome = document.getElementById('page-home');
 const pageMe = document.getElementById('page-me');
@@ -165,7 +170,8 @@ function savePreloadCount(value) {
 
 let preloadCount = readPreloadCount();
 
-// 声音始终开启；只有浏览器「手势之前不许有声自动播放」策略会临时静音
+// 声音开关：默认静音，点左上角按钮解锁；解锁后切视频保持有声
+let soundOn = false;
 let activeSlide = null;
 // 预读白名单：当前屏 + 后面 preloadCount 屏持有 src，其余一律释放
 let preloadSlides = new Set();
@@ -690,7 +696,8 @@ function buildSlide(item, index) {
 
   const video = document.createElement('video');
   video.className = 'player';
-  video.muted = !hadGesture && needsGestureForAudio;
+  // 默认静音：新屏先静音，用户点左上角按钮才解锁声音
+  video.muted = !soundOn || (!hadGesture && needsGestureForAudio);
   video.loop = true;
   video.playsInline = true;
   video.preload = 'none';
@@ -895,7 +902,7 @@ const needsGestureForAudio =
 //   2. 起播之后自动重试最多 2 次：滑动刚结束时通常还在手势有效期内。
 // 没解锁成功的屏，下一次手势会再补一次，不会一直静音。
 function unlockAudio(video) {
-  if (!video || video._userPaused) return;
+  if (!video || !soundOn || video._userPaused) return;
   if (!video._player && !video.src) return;
   if (video.paused) {
     playVideo(video); // 还没起播：直接在手势里起播，有声
@@ -926,7 +933,7 @@ function nearestSlide() {
 function ensureAudible(slide) {
   const target = slide || activeSlide;
   if (!target || target.dataset.active !== '1') return;
-  if (!isIOS || !hadGesture || target._audioUnlocked) return;
+  if (!soundOn || !isIOS || !hadGesture || target._audioUnlocked) return;
   const video = target.querySelector('video');
   if (!video || (!video._player && !video.src) || video._userPaused) return;
   video._audioTries = (video._audioTries || 0) + 1;
@@ -975,10 +982,11 @@ function playVideo(video) {
     // 手势之前的有声自动播放一定会被拦，直接静音起播并标记，等手势再还声音
     video.muted = true;
     video._policyMuted = true;
-  } else if (video._policyMuted) {
-    // 之前临时静音过的：先把声音设置还回去（手势内能直接有声，否则会再被拦一次）
+  } else {
+    // 每次起播都按声音开关同步一次：预读过的屏可能还留着上一次的静音状态，
+    // 不同步就会出现「切到下一屏就没声音」
     video._policyMuted = false;
-    video.muted = false;
+    video.muted = !soundOn;
   }
 
   tryStartVideo(video).catch(() => {
@@ -1025,7 +1033,7 @@ function onUserGesture(event) {
     const video = activeSlide.querySelector('video');
     if (video && video.paused) playVideo(video);
   }
-  if (!activeSlide) return;
+  if (!activeSlide || !soundOn) return;
   if (isIOS) {
     // 手势这一拍里解锁当前屏；滑动时顺手解锁即将到位的那一屏
     unlockSlide(activeSlide);
@@ -1046,6 +1054,30 @@ function pauseVideo(video) {
   } else if (!video.paused) {
     video.pause();
   }
+}
+
+// 声音开关：默认静音，点按钮解锁。解锁是在手势里做的，必须重播一次才会真正出声。
+// 关声音只改 muted，不打断播放。
+function setSound(next) {
+  soundOn = next;
+  muteBtn.classList.toggle('is-muted', !soundOn);
+  muteBtn.innerHTML = soundOn ? ICONS.volumeOn : ICONS.volumeMute;
+  muteBtn.setAttribute('aria-label', soundOn ? '关闭声音' : '开启声音');
+  if (!soundOn) {
+    feedEl.querySelectorAll('video').forEach((video) => {
+      video.muted = true;
+      video._policyMuted = false;
+    });
+    return;
+  }
+  if (!activeSlide) return;
+  const video = activeSlide.querySelector('video');
+  if (!video || (!video._player && !video.src)) return;
+  if (video.paused) {
+    playVideo(video);
+    return;
+  }
+  restoreAudio(video);
 }
 
 // 高级设置「预加载数量」：写偏好 + 同步显示 + 立刻按新数量补齐或收回预读
@@ -1638,7 +1670,7 @@ function activate(slide) {
   if (isIOS) {
     slide._audioUnlocked = false;
     video._audioTries = 0;
-    if (hadGesture) {
+    if (soundOn && hadGesture) {
       clearTimeout(slide._audibleTimer);
       slide._audibleTimer = setTimeout(() => {
         if (slide.dataset.active === '1') ensureAudible(slide);
@@ -3001,6 +3033,7 @@ clearCacheBtn.addEventListener('click', () => {
 });
 aboutBtn.addEventListener('click', () => showToast('启蒙短视频 v1.0'));
 cfgBack.addEventListener('click', closeConfigPage);
+muteBtn.addEventListener('click', () => setSound(!soundOn));
 
 // 作品 / 私密 / 喜欢：切换高亮（个人页只是标签样式）
 meTabs.forEach((tab) =>
