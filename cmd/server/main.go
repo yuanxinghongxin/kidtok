@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -72,9 +73,18 @@ func run() error {
 		return err
 	}
 
+	// 合集全量列表的本地缓存放在 config.json 同级的 cache/ 下，
+	// 容器里只要把配置目录挂出来，缓存就会跟着持久化。
+	cacheDir := os.Getenv("QIMENG_CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir = filepath.Join(filepath.Dir(configJSON), "cache")
+	}
+	collections := api.NewCollectionCache(cacheDir, 0)
+	slog.Info("合集缓存目录", "dir", cacheDir)
+
 	srv := &http.Server{
 		Addr:              cfg.Server.Addr,
-		Handler:           api.NewRouter(api.NewHandler(alistProvider, store, sources), http.FS(webFS)),
+		Handler:           api.NewRouter(api.NewHandler(alistProvider, store, sources, collections), http.FS(webFS)),
 		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
 	}
 

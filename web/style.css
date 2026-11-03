@@ -1140,6 +1140,46 @@ body {
   padding: 4px 10px 20px;
 }
 
+/* 骨架屏：与真实封面同尺寸，灰色呼吸闪烁，数据回来直接替换 */
+.playlist-list.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 10px 8px;
+  padding: 4px 10px 20px;
+}
+
+.skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.skeleton-cover {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #2a2a2e;
+  border-radius: 8px;
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.skeleton-line {
+  width: 72%;
+  height: 12px;
+  background: #2a2a2e;
+  border-radius: 4px;
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .episode-card {
   display: flex;
   flex-direction: column;

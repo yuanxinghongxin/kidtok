@@ -31,13 +31,16 @@ type Handler struct {
 	// 保存配置后立即生效，不需要重启进程。
 	sources *source.Sources
 
+	// collections 是栏目全量列表的本地 JSON 缓存 + 后台预热器。
+	collections *CollectionCache
+
 	feedMu    sync.Mutex
 	feedCache feedCacheEntry
 }
 
-// NewHandler 创建接口处理器。
-func NewHandler(alist *source.AlistProvider, store *config.Store, sources *source.Sources) *Handler {
-	return &Handler{alist: alist, store: store, sources: sources}
+// NewHandler 创建接口处理器；collections 为 nil 时退化为每次都直接拉上游。
+func NewHandler(alist *source.AlistProvider, store *config.Store, sources *source.Sources, collections *CollectionCache) *Handler {
+	return &Handler{alist: alist, store: store, sources: sources, collections: collections}
 }
 
 // alistClient 按最新配置返回客户端，未配置网盘时为 nil。
@@ -102,6 +105,8 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 
 	// 同一目录 60 秒内复用上一次的混排结果：勾选栏目多时一次混排很贵
 	if items, ok := h.cachedFeed(dir); ok {
+		// 命中缓存也补一次预热：进程重启后缓存是空的，靠每次 /api/feed 慢慢填满
+		h.prefetchCollections(items)
 		OK(w, items)
 		return
 	}
@@ -113,7 +118,39 @@ func (h *Handler) Feed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cacheFeed(dir, items)
+	// 先把当前列表返回给前端，再在后台把每个栏目拉全并落盘，
+	// 用户点开合集时直接读 JSON，不用等上游翻页
+	h.prefetchCollections(items)
 	OK(w, items)
+}
+
+// prefetchCollections 为本次 /api/feed 出现的每个「源 + 栏目」启动一次后台预热。
+// CollectionCache 内部按 key 去重，所以复用 60 秒 Feed 缓存时重复调用也不会打上游。
+func (h *Handler) prefetchCollections(items []source.FeedItem) {
+	if h.collections == nil {
+		return
+	}
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		sourceID := strings.TrimSpace(item.SourceID)
+		categoryID := strings.TrimSpace(item.CategoryID)
+		if sourceID == "" || categoryID == "" {
+			continue
+		}
+		key := collectionKey(sourceID, categoryID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		o := h.sources.Online(sourceID)
+		if o == nil {
+			continue
+		}
+		h.collections.Warm(key, func(ctx context.Context) ([]source.FeedItem, error) {
+			return o.AllFeedItems(ctx, categoryID)
+		})
+	}
 }
 
 // cachedFeed 命中缓存时返回副本以外的只读切片；过期或目录不同都视为未命中。
@@ -156,7 +193,18 @@ func (h *Handler) FeedAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := o.AllFeedItems(r.Context(), categoryID)
+	// 优先读本地 JSON（预热写好的），命中就是毫秒级；未命中才走网络，
+	// 并且与正在进行的后台预热共用同一次上游请求。
+	fetch := func(ctx context.Context) ([]source.FeedItem, error) {
+		return o.AllFeedItems(ctx, categoryID)
+	}
+	var items []source.FeedItem
+	var err error
+	if h.collections != nil {
+		items, err = h.collections.Get(r.Context(), collectionKey(o.ID(), categoryID), fetch)
+	} else {
+		items, err = fetch(r.Context())
+	}
 	if err != nil {
 		slog.Error("拉取栏目全部视频失败", "source_id", o.ID(), "category_id", categoryID, "err", err)
 		Fail(w, http.StatusBadGateway, CodeUpstreamErr, "拉取栏目全部视频失败: "+err.Error())

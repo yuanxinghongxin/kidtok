@@ -2039,6 +2039,7 @@ function renderPlaylist(col, current) {
   sheetSub.textContent = sub;
   sheetList.innerHTML = '';
   sheetList.classList.remove('episode-grid');
+  sheetList.classList.remove('skeleton-grid');
 
   let lastSeason = '';
   col.episodes.forEach((ep, index) => {
@@ -2163,12 +2164,11 @@ function openSheet(slide) {
 async function openCategorySheet(col, currentPath, slide) {
   sheetTitle.textContent = col.name;
   sheetSub.textContent = '正在加载全部内容…';
+  // 数据没回来前先铺骨架屏：15 个灰色闪烁卡片，比「加载中…」更不跳
   sheetList.classList.remove('episode-grid');
+  sheetList.classList.add('skeleton-grid');
   sheetList.innerHTML = '';
-  const loading = document.createElement('div');
-  loading.className = 'sheet-loading';
-  loading.textContent = '加载中…';
-  sheetList.appendChild(loading);
+  sheetList.appendChild(buildSkeletonGrid());
   showSheet();
 
   try {
@@ -2205,11 +2205,29 @@ function syncSlideEpisode(slide, col, ep, index) {
   if (tagText) tagText.textContent = collectionTagText(col, ep, index);
 }
 
+// 极简骨架屏：数据没回来前先铺一排灰色闪烁卡片，宽高与真实封面一致，
+// 数据一到直接整体替换，不会出现布局跳动。
+function buildSkeletonGrid(count = 15) {
+  const fragment = document.createDocumentFragment();
+  for (let i = 0; i < count; i++) {
+    const card = document.createElement('div');
+    card.className = 'skeleton-card';
+    const cover = document.createElement('div');
+    cover.className = 'skeleton-cover';
+    const line = document.createElement('div');
+    line.className = 'skeleton-line';
+    card.append(cover, line);
+    fragment.appendChild(card);
+  }
+  return fragment;
+}
+
 // 面板网格：几百条只渲染封面 + 标题，图片用浏览器原生懒加载。
 function renderCategoryGrid(col, items, current) {
   sheetTitle.textContent = col.name;
   sheetSub.textContent = '共 ' + items.length + ' 集';
   sheetList.innerHTML = '';
+  sheetList.classList.remove('skeleton-grid');
   sheetList.classList.add('episode-grid');
 
   const fragment = document.createDocumentFragment();
