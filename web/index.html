@@ -119,32 +119,23 @@
       </button>
     </div>
 
-    <!-- 作品 / 私密 / 喜欢 -->
+    <!-- 观看历史 / 喜欢：右侧的「清空」只清当前这个 Tab 的数据 -->
     <div class="me-tabs">
-      <button class="me-tab active" type="button" data-me-tab="works">作品 <b id="me-works">0</b></button>
-      <button class="me-tab" type="button" data-me-tab="private">私密</button>
+      <button class="me-tab active" type="button" data-me-tab="history">观看历史</button>
       <button class="me-tab" type="button" data-me-tab="likes">喜欢</button>
+      <button id="me-clear" class="me-clear" type="button" hidden>清空</button>
     </div>
 
-    <!-- 观看历史 / 我的收藏：暂时没有数据，用两列封面占位图铺满 -->
-    <section class="me-gallery">
-      <div class="me-gallery-head">
-        <h2 class="me-gallery-title">我的收藏</h2>
-        <span class="me-gallery-count">12</span>
-      </div>
-      <div class="me-grid" aria-hidden="true">
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
-        <div class="me-tile"></div>
+    <!-- Tab 内容：3 列正方形封面网格；没有数据时换成居中的空状态 -->
+    <section class="me-panel">
+      <div id="me-grid" class="me-grid"></div>
+      <div id="me-empty" class="me-empty" hidden>
+        <svg class="me-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7 14.5 24 24l17-9.5"/>
+          <path d="M7 14.5v19L24 43l17-9.5v-19L24 24 7 14.5Z"/>
+          <path d="M24 24v19"/>
+        </svg>
+        <p id="me-empty-text" class="me-empty-text">还没有观看记录</p>
       </div>
     </section>
   </main>

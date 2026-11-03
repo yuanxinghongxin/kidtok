@@ -1470,14 +1470,37 @@ body {
   text-align: center;
 }
 
-/* ---------- 作品 / 私密 ---------- */
+/* ---------- 观看历史 / 喜欢 ---------- */
 
 .me-tabs {
   display: flex;
+  align-items: center;
   gap: 26px;
   margin: 20px 18px 0;
   padding-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 清空按钮只有当前 Tab 有数据时才出现，默认贴在最右侧 */
+.me-clear {
+  margin-left: auto;
+  padding: 4px 11px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.me-clear:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.me-clear[hidden] {
+  display: none;
 }
 
 .me-tab {
@@ -2214,80 +2237,57 @@ body {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* ============ 我的收藏：两列封面占位网格 ============ */
-
-.me-gallery {
-  padding: 18px 18px 0;
-}
-
-.me-gallery-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.me-gallery-title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.me-gallery-count {
-  color: rgba(255, 255, 255, 0.38);
-  font-size: 12px;
-}
+/* ============ 观看历史 / 喜欢：3 列正方形封面网格 ============ */
 
 .me-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 14px 18px 0;
 }
 
-/* 占位封面：深色渐变块 + 中心播放按钮（没有真实数据时铺满两列） */
+.me-grid[hidden] {
+  display: none;
+}
+
+/* 只有封面：正方形裁切、小圆角，失败/缺图时留一个深色底块 */
 .me-tile {
   position: relative;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 1 / 1;
   overflow: hidden;
-  background: linear-gradient(150deg, #2c2c35 0%, #15151a 100%);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
+  background: #1a1a20;
+  border-radius: 8px;
 }
 
-.me-grid .me-tile:nth-child(3n + 2) {
-  background: linear-gradient(150deg, #30313b 0%, #191a20 100%);
+.me-tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
-.me-grid .me-tile:nth-child(3n + 3) {
-  background: linear-gradient(150deg, #2a2b33 0%, #141418 100%);
+/* 空状态：居中的空盒子图标 + 一行灰字 */
+.me-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 64px 18px;
+  color: rgba(255, 255, 255, 0.32);
 }
 
-.me-tile::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 44px;
-  height: 44px;
-  margin: -22px 0 0 -22px;
-  background: rgba(0, 0, 0, 0.36);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 50%;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+.me-empty[hidden] {
+  display: none;
 }
 
-.me-tile::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 0;
-  height: 0;
-  margin: -7px 0 0 -5px;
-  border-left: 12px solid rgba(255, 255, 255, 0.92);
-  border-top: 7px solid transparent;
-  border-bottom: 7px solid transparent;
+.me-empty-icon {
+  width: 56px;
+  height: 56px;
+}
+
+.me-empty-text {
+  margin: 0;
+  font-size: 13px;
 }
 
 /* ============ 设置抽屉：从右侧滑出 ============ */

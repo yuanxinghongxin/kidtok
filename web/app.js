@@ -95,10 +95,13 @@ const pageHome = document.getElementById('page-home');
 const pageMe = document.getElementById('page-me');
 const navEmpty = document.getElementById('nav-empty');
 const meCount = document.getElementById('me-count');
-const meWorks = document.getElementById('me-works');
 const meCollections = document.getElementById('me-collections');
 const meCollectionsCard = document.getElementById('me-collections-card');
 const meTabs = document.querySelectorAll('.me-tab');
+const meGrid = document.getElementById('me-grid');
+const meEmpty = document.getElementById('me-empty');
+const meEmptyText = document.getElementById('me-empty-text');
+const meClear = document.getElementById('me-clear');
 const pageCollections = document.getElementById('page-collections');
 const collectionsList = document.getElementById('collections-list');
 const collectionsBack = document.getElementById('collections-back');
@@ -641,7 +644,10 @@ function applyInfo(slide, col, ep) {
   slide._episodeIndex = index;
   slide._collectionId = col.id;
   slide._mock = mock;
-  slide._liked = false;
+  // 这一屏对应的视频信息：双击红心 / 观看历史都要整条存进 localStorage
+  slide._meta = buildVideoMeta(col, ep);
+  // 回显：之前喜欢过的视频，滑到它时红心一出现就是高亮的红色
+  slide._liked = isLikedPath(ep.path);
 
   const tagText = slide.querySelector('.collection-tag-text');
   if (!tagText) return;
@@ -668,12 +674,7 @@ function applyInfo(slide, col, ep) {
     if (count) count.textContent = formatCount(mock[btn.dataset.count]);
   });
 
-  const like = slide.querySelector('.act-like');
-  if (like) {
-    like.classList.remove('is-liked');
-    const wrap = like.querySelector('.act-icon');
-    if (wrap) wrap.innerHTML = ICONS.heartOutline;
-  }
+  setLikeUI(slide, slide._liked);
 }
 
 function buildSlide(item, index) {
@@ -770,6 +771,8 @@ function bindPoolVideo(video) {
     const coverImg = slide.querySelector('img.cover');
     if (coverImg) saveLastCover(coverImg.getAttribute('src'));
     if (isIOS && !video.muted) ensureAudible(slide);
+    // 真正播放起来才开始计时：连续播放满 2 秒才记进观看历史
+    scheduleHistory(slide);
   });
 
   // 进度条跟随「当前宿主屏」：池元素搬去哪一屏，就刷新哪一屏的进度条
@@ -782,7 +785,11 @@ function bindPoolVideo(video) {
 
   // 暂停态只由视频自身的 play/pause 事件驱动，保证图标和真实状态一致
   video.addEventListener('pause', () => {
-    if (video._slide) video._slide.classList.add('paused');
+    if (video._slide) {
+      video._slide.classList.add('paused');
+      // 不到 2 秒就暂停/划走：这次不计入观看历史
+      cancelHistory(video._slide);
+    }
   });
   video.addEventListener('play', () => {
     if (video._slide) video._slide.classList.remove('paused');
@@ -946,7 +953,6 @@ function renderList(list, mode) {
   dataSource = list;
   currentMode = mode;
   meCount.textContent = String(list.length);
-  meWorks.textContent = String(list.length);
 
   // 没有占位封面时（比如首次安装），先用列表第一屏的封面兜底，
   // 这样下次冷启动至少有图可显示
@@ -1826,10 +1832,109 @@ function activate(slide) {
 
 function deactivate(slide) {
   slide.dataset.active = '';
+  cancelHistory(slide);
   const video = slide._video;
   if (video) pauseVideo(video);
   // 不在「当前屏 + 预读范围」白名单里的，立刻释放
   enforceWhitelist();
+}
+
+// ---------- 喜欢 / 观看历史（localStorage 持久化） ----------
+// 只存前端本地：喜欢列表与观看历史互不影响，清空某个 Tab 只删对应的 key。
+const LIKED_KEY = 'liked_videos';
+const HISTORY_KEY = 'history_videos';
+const HISTORY_MAX = 50;
+
+function readLocalList(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((v) => v && v.path) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function writeLocalList(key, list) {
+  try {
+    localStorage.setItem(key, JSON.stringify(list));
+  } catch (err) {
+    // 隐私模式 / 配额满：静默失败，不影响播放
+  }
+}
+
+let likedVideos = readLocalList(LIKED_KEY);
+const likedPaths = new Set(likedVideos.map((v) => v.path));
+
+function isLikedPath(path) {
+  return !!path && likedPaths.has(path);
+}
+
+// 一屏对应的视频信息：vod_id / vod_name / vod_pic / category_name 都写全，
+// 后面的喜欢列表、观看历史直接拿这条记录渲染网格。
+function buildVideoMeta(col, ep) {
+  const path = ep.path || '';
+  // 在线源的 path 是「src:源ID:视频ID」，取最后一段当 vod_id；网盘条目用路径
+  const online = /^src:[^:]+:(.+)$/.exec(path);
+  return {
+    vod_id: online ? online[1] : path,
+    vod_name: ep.name || col.name,
+    vod_pic: ep.cover || '',
+    category_name: col.name,
+    path,
+  };
+}
+
+// 红心状态只走这一个入口，避免图标 / 计数 / 本地数据三处不同步
+function setLikeUI(slide, liked) {
+  slide._liked = liked;
+  const btn = slide.querySelector('.act-like');
+  if (!btn) return;
+  btn.classList.toggle('is-liked', liked);
+  const wrap = btn.querySelector('.act-icon');
+  if (wrap) wrap.innerHTML = liked ? ICONS.heartFill : ICONS.heartOutline;
+}
+
+// 喜欢 / 取消喜欢：同步 localStorage，并把当前所有屏的红心一起刷一遍
+function setVideoLiked(meta, liked) {
+  if (!meta || !meta.path) return;
+  if (liked) {
+    if (likedPaths.has(meta.path)) return;
+    likedPaths.add(meta.path);
+    likedVideos.unshift(meta);
+  } else {
+    if (!likedPaths.has(meta.path)) return;
+    likedPaths.delete(meta.path);
+    likedVideos = likedVideos.filter((v) => v.path !== meta.path);
+  }
+  writeLocalList(LIKED_KEY, likedVideos);
+}
+
+// 观看历史：停留播放满 2 秒才记一条；去重、最新的排第一、最多 50 条
+function recordHistory(meta) {
+  if (!meta || !meta.path) return;
+  const entry = Object.assign({}, meta, { watched_at: Date.now() });
+  const list = readLocalList(HISTORY_KEY).filter((v) => v.path !== meta.path);
+  list.unshift(entry);
+  if (list.length > HISTORY_MAX) list.length = HISTORY_MAX;
+  writeLocalList(HISTORY_KEY, list);
+}
+
+function scheduleHistory(slide) {
+  if (slide._historyTimer || slide._historyLogged) return;
+  slide._historyTimer = setTimeout(() => {
+    slide._historyTimer = 0;
+    // 只记录当前屏：预读屏若也起播了，计时到点时不算数
+    if (!slide.dataset.active || !slide._meta) return;
+    slide._historyLogged = true;
+    recordHistory(slide._meta);
+  }, 2000);
+}
+
+function cancelHistory(slide) {
+  if (!slide._historyTimer) return;
+  clearTimeout(slide._historyTimer);
+  slide._historyTimer = 0;
 }
 
 // ---------- 点赞 ----------
@@ -1850,17 +1955,17 @@ function popHeart(x, y) {
   setTimeout(() => heart.remove(), 950);
 }
 
+// 双击红心是「开关」：没喜欢就点赞并写入 liked_videos，已喜欢就取消并从数组删除
 function likeSlide(slide, x, y) {
-  popHeart(x, y);
-  if (slide._liked) return;
-  slide._liked = true;
+  const liked = !slide._liked;
+  // 只有点赞冒红心；取消点赞只把图标换回空心
+  if (liked) popHeart(x, y);
+  setLikeUI(slide, liked);
+  setVideoLiked(slide._meta, liked);
 
   const btn = slide.querySelector('.act-like');
-  if (!btn) return;
-  btn.classList.add('is-liked');
-  const wrap = btn.querySelector('.act-icon');
-  if (wrap) wrap.innerHTML = ICONS.heartFill;
-  slide._mock.likes += 1;
+  if (!btn || !slide._mock) return;
+  slide._mock.likes = Math.max(0, slide._mock.likes + (liked ? 1 : -1));
   const count = btn.querySelector('.act-count');
   if (count) count.textContent = formatCount(slide._mock.likes);
   bump(btn);
@@ -2292,6 +2397,45 @@ navTabs.forEach((tab) =>
   })
 );
 
+// ---------- 我的 · 观看历史 / 喜欢 ----------
+let meTab = 'history';
+
+const ME_EMPTY_TEXT = {
+  history: '还没有观看记录',
+  likes: '还没有喜欢的视频',
+};
+
+// 读取当前 Tab 的本地数据并重绘：3 列方形封面；空数组时显示空状态
+function renderMineTab() {
+  const items = meTab === 'likes' ? likedVideos : readLocalList(HISTORY_KEY);
+  meTabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.meTab === meTab));
+
+  const empty = items.length === 0;
+  meGrid.replaceChildren();
+  meGrid.hidden = empty;
+  meEmpty.hidden = !empty;
+  meClear.hidden = empty;
+  meEmptyText.textContent = ME_EMPTY_TEXT[meTab] || ME_EMPTY_TEXT.history;
+  if (empty) return;
+
+  const fragment = document.createDocumentFragment();
+  items.forEach((item) => {
+    const tile = document.createElement('div');
+    tile.className = 'me-tile';
+    if (item.vod_pic) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.src = item.vod_pic;
+      // 封面链接过期/失效时退回深色底块，不显示裂图
+      img.addEventListener('error', () => img.remove());
+      tile.appendChild(img);
+    }
+    fragment.appendChild(tile);
+  });
+  meGrid.appendChild(fragment);
+}
+
 // ---------- 底部 首页 / 我的 ----------
 function switchTab(name) {
   tabButtons.forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
@@ -2308,6 +2452,7 @@ function switchTab(name) {
   }
   feedEl.querySelectorAll('video').forEach(pauseVideo);
   loadServerSummary();
+  renderMineTab();
 }
 
 tabButtons.forEach((tab) =>
@@ -3181,12 +3326,28 @@ aboutBtn.addEventListener('click', () => showToast('启蒙短视频 v1.0'));
 cfgBack.addEventListener('click', closeConfigPage);
 muteBtn.addEventListener('click', () => setSound(!soundOn));
 
-// 作品 / 私密 / 喜欢：切换高亮（个人页只是标签样式）
+// 观看历史 / 喜欢：切换 Tab 后读对应的 localStorage 重绘网格
 meTabs.forEach((tab) =>
   tab.addEventListener('click', () => {
-    meTabs.forEach((t) => t.classList.toggle('active', t === tab));
+    meTab = tab.dataset.meTab === 'likes' ? 'likes' : 'history';
+    renderMineTab();
   })
 );
+
+// 清空按钮：只清当前 Tab 的数据，喜欢清空后屏幕上的红心也要同步变回空心
+meClear.addEventListener('click', () => {
+  if (meTab === 'likes') {
+    likedVideos = [];
+    likedPaths.clear();
+    writeLocalList(LIKED_KEY, []);
+    feedEl.querySelectorAll('.slide').forEach((slide) => setLikeUI(slide, false));
+    showToast('已清空喜欢');
+  } else {
+    writeLocalList(HISTORY_KEY, []);
+    showToast('已清空观看历史');
+  }
+  renderMineTab();
+});
 
 // 高级设置：预加载数量（0~5，默认 1），点一次即保存并立刻按新数量预读
 applyPreloadCount(preloadCount);
@@ -3315,7 +3476,6 @@ async function boot() {
     const data = await api('/api/feed?path=' + encodeURIComponent(currentDir));
     if (!Array.isArray(data) || data.length === 0) {
       meCount.textContent = '0';
-      meWorks.textContent = '0';
       meCollections.textContent = '0';
       showEmpty('该目录下没有视频文件');
       return;
