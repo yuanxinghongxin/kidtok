@@ -2967,6 +2967,7 @@ function renderSourceCard(src) {
   actions.className = 'cfg-source-actions';
   actions.innerHTML = [
     '<button class="cfg-test-btn" type="button" data-role="test">检测分类</button>',
+    '<button class="cfg-all-btn" type="button" data-role="all" hidden>全选</button>',
     '<span class="cfg-source-status" data-role="status"></span>',
   ].join('');
 
@@ -3073,6 +3074,15 @@ function renderSourceCard(src) {
     testSourceDraft(src, card);
   });
 
+  // 全选/取消全选：几十个分类不用一个个点
+  card.querySelector('[data-role="all"]').addEventListener('click', () => {
+    const allSelected =
+      src.catOptions.length > 0 &&
+      src.catOptions.every((cat) => src.categories.includes(cat.id));
+    src.categories = allSelected ? [] : src.catOptions.map((cat) => cat.id);
+    renderSourceCats(card, src);
+  });
+
   const statusEl = card.querySelector('[data-role="status"]');
   statusEl.textContent = src.status;
   statusEl.className = 'cfg-source-status' + (src.statusKind ? ' ' + src.statusKind : '');
@@ -3084,6 +3094,7 @@ function renderSourceCats(card, src) {
   const box = card.querySelector('[data-role="cats"]');
   if (!box) return;
   box.innerHTML = '';
+  syncAllBtn(card, src);
 
   if (!src.catOptions.length) {
     const hint = document.createElement('span');
@@ -3113,6 +3124,7 @@ function renderSourceCats(card, src) {
       } else {
         src.categories = src.categories.filter((id) => id !== cat.id);
       }
+      syncAllBtn(card, src);
     });
 
     const text = document.createElement('span');
@@ -3121,6 +3133,17 @@ function renderSourceCats(card, src) {
     label.append(input, text);
     box.appendChild(label);
   });
+}
+
+// 「全选」按钮随勾选状态同步：没分类时隐藏，全选后变成「取消全选」。
+function syncAllBtn(card, src) {
+  const btn = card.querySelector('[data-role="all"]');
+  if (!btn) return;
+  const total = src.catOptions.length;
+  btn.hidden = total === 0;
+  if (!total) return;
+  const allSelected = src.catOptions.every((cat) => src.categories.includes(cat.id));
+  btn.textContent = allSelected ? '取消全选' : '全选';
 }
 
 async function postJSON(path, payload) {

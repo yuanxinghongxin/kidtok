@@ -2194,6 +2194,24 @@ body {
   cursor: default;
 }
 
+/* 全选/取消全选：次要按钮，和「检测分类」同一行但视觉上让位 */
+.cfg-all-btn {
+  flex: none;
+  padding: 7px 13px;
+  color: #ffd54a;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(255, 213, 74, 0.12);
+  border: 1px solid rgba(255, 213, 74, 0.45);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.cfg-all-btn:active {
+  opacity: 0.75;
+}
+
 .cfg-source-status {
   flex: 1;
   min-width: 0;
