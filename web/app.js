@@ -199,7 +199,7 @@ let activeCollection = null; // collection 模式下正在连播的合集
 let dataSource = []; // 当前渲染到 DOM、正在滚动的数据源
 let observer = null; // 当前数据源对应的 IntersectionObserver
 let sheetOrigin = 'feed'; // 选集面板从哪打开：'feed' 首页 | 'collections' 我的·收录合集
-let collectionOrigin = 'feed'; // 合集连播从哪进入：决定返回时回到首页还是收录合集
+let collectionOrigin = 'feed'; // 合集连播从哪进入：决定返回时回到首页 / 收录合集 / 我的
 
 function getCollection(id) {
   return collections.find((col) => col.id === id) || collections[0];
@@ -2326,11 +2326,13 @@ sheet.querySelector('.sheet-mask').addEventListener('click', closeSheet);
 // ---------- 模式切换：推荐流 <-> 合集连播 ----------
 
 // 进入合集：记住主 Feed 的位置，换成该合集的正序列表，并跳到指定集。
-// origin 为 'collections' 表示从「我的 · 收录合集」进入，返回时要先回合集列表。
+// origin：'collections' 从「我的 · 收录合集」进入，'mine' 从「我的 · 观看历史 / 喜欢」进入，
+// 其余按首页推荐流处理；返回时分别回到对应页面。
 function enterCollection(col, episodeIndex, origin, list) {
   const fromCollections = origin === 'collections';
+  const fromMine = origin === 'mine';
   if (currentMode === 'feed') returnIndex = currentPlayIndex;
-  collectionOrigin = fromCollections ? 'collections' : 'feed';
+  collectionOrigin = fromCollections ? 'collections' : fromMine ? 'mine' : 'feed';
 
   if (fromCollections) {
     // 从收录合集页进入播放：收起合集页，切回首页承载全屏播放
@@ -2351,22 +2353,31 @@ function enterCollection(col, episodeIndex, origin, list) {
 }
 
 // 退出合集：换回打乱的推荐流，并回到进入前停留的那一屏。
-// 如果是从「我的 · 收录合集」进来的，先回到收录合集页并重新打开该合集的选集面板。
+// 从「我的 · 收录合集」进来的先回到收录合集页并重开选集面板；
+// 从「我的 · 观看历史 / 喜欢」进来的回到「我的」页（列表重新渲染，把刚看的这条补进历史）。
 function exitCollection() {
   if (currentMode !== 'collection') return;
   const col = activeCollection;
   const fromCollections = collectionOrigin === 'collections';
+  const fromMine = collectionOrigin === 'mine';
   collectionOrigin = 'feed';
   activeCollection = null;
   collectionList = [];
   setBackVisible(false);
 
-  // 先切页面再重建：从收录合集退出时首页保持隐藏，
+  // 先切页面再重建：从「我的」退出时首页保持隐藏，
   // 避免 IntersectionObserver 在重建后立刻起播、在后台出声。
   if (fromCollections) {
     pageHome.hidden = true;
     pageMe.hidden = true;
     pageCollections.hidden = false;
+    tabButtons.forEach((tab) =>
+      tab.classList.toggle('active', tab.dataset.tab === 'me')
+    );
+  } else if (fromMine) {
+    pageHome.hidden = true;
+    pageCollections.hidden = true;
+    pageMe.hidden = false;
     tabButtons.forEach((tab) =>
       tab.classList.toggle('active', tab.dataset.tab === 'me')
     );
@@ -2383,6 +2394,7 @@ function exitCollection() {
   feedEl.querySelectorAll('video').forEach(pauseVideo);
 
   if (fromCollections && col) openCollectionPanel(col, '', 'collections');
+  else if (fromMine) renderMineTab();
 }
 
 function setBackVisible(visible) {
@@ -2482,7 +2494,7 @@ function renderMineTab() {
 }
 
 // 点列表整行：切回首页，把这条视频当成只有一集的合集直接开播；
-// 返回键仍按原来的逻辑回到推荐流。
+// 返回键回到「我的」页原来的列表，而不是首页推荐流。
 function playStoredVideo(item) {
   if (!item || !item.path) return;
   const ep = {
@@ -2504,7 +2516,7 @@ function playStoredVideo(item) {
     seasonTotal: 1,
   };
   switchTab('home');
-  enterCollection(col, 0, 'feed', [ep]);
+  enterCollection(col, 0, 'mine', [ep]);
 }
 
 // ---------- 底部 首页 / 我的 ----------
