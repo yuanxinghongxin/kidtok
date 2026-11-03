@@ -98,7 +98,7 @@ const meCount = document.getElementById('me-count');
 const meCollections = document.getElementById('me-collections');
 const meCollectionsCard = document.getElementById('me-collections-card');
 const meTabs = document.querySelectorAll('.me-tab');
-const meGrid = document.getElementById('me-grid');
+const meList = document.getElementById('me-list');
 const meEmpty = document.getElementById('me-empty');
 const meEmptyText = document.getElementById('me-empty-text');
 const meClear = document.getElementById('me-clear');
@@ -2405,14 +2405,15 @@ const ME_EMPTY_TEXT = {
   likes: '还没有喜欢的视频',
 };
 
-// 读取当前 Tab 的本地数据并重绘：3 列方形封面；空数组时显示空状态
+// 读取当前 Tab 的本地数据并重绘：B 站风格单列（左图右文）；空数组时显示空状态。
+// 只读取不写入：localStorage 里原有的时间戳等字段全部保留，渲染时不画时间。
 function renderMineTab() {
   const items = meTab === 'likes' ? likedVideos : readLocalList(HISTORY_KEY);
   meTabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.meTab === meTab));
 
   const empty = items.length === 0;
-  meGrid.replaceChildren();
-  meGrid.hidden = empty;
+  meList.replaceChildren();
+  meList.hidden = empty;
   meEmpty.hidden = !empty;
   meClear.hidden = empty;
   meEmptyText.textContent = ME_EMPTY_TEXT[meTab] || ME_EMPTY_TEXT.history;
@@ -2420,20 +2421,72 @@ function renderMineTab() {
 
   const fragment = document.createDocumentFragment();
   items.forEach((item) => {
-    const tile = document.createElement('div');
-    tile.className = 'me-tile';
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'me-row';
+    row.setAttribute('aria-label', item.vod_name || '播放');
+
+    // 左：140x80 横图缩略图；没有封面或加载失败时留深色块
     if (item.vod_pic) {
       const img = document.createElement('img');
+      img.className = 'me-row-thumb';
       img.alt = '';
       img.loading = 'lazy';
       img.src = item.vod_pic;
-      // 封面链接过期/失效时退回深色底块，不显示裂图
-      img.addEventListener('error', () => img.remove());
-      tile.appendChild(img);
+      img.addEventListener('error', () => {
+        const ph = document.createElement('div');
+        ph.className = 'me-row-thumb';
+        img.replaceWith(ph);
+      });
+      row.appendChild(img);
+    } else {
+      const ph = document.createElement('div');
+      ph.className = 'me-row-thumb';
+      row.appendChild(ph);
     }
-    fragment.appendChild(tile);
+
+    // 右：分类标签 + 标题（最多两行），不生成时间节点
+    const body = document.createElement('span');
+    body.className = 'me-row-body';
+    const cat = document.createElement('span');
+    cat.className = 'me-row-cat';
+    cat.textContent = item.category_name || '';
+    const name = document.createElement('span');
+    name.className = 'me-row-name';
+    name.textContent = item.vod_name || '';
+    body.append(cat, name);
+    row.appendChild(body);
+
+    row.addEventListener('click', () => playStoredVideo(item));
+    fragment.appendChild(row);
   });
-  meGrid.appendChild(fragment);
+  meList.appendChild(fragment);
+}
+
+// 点列表整行：切回首页，把这条视频当成只有一集的合集直接开播；
+// 返回键仍按原来的逻辑回到推荐流。
+function playStoredVideo(item) {
+  if (!item || !item.path) return;
+  const ep = {
+    path: item.path,
+    name: item.vod_name || '',
+    cover: item.vod_pic || '',
+    collectionId: 'mine:' + item.path,
+    episodeIndex: 0,
+    season: '',
+    seasonIndex: 0,
+    seasonCount: 0,
+    seasonTotal: 1,
+  };
+  const col = {
+    id: ep.collectionId,
+    name: item.category_name || '',
+    episodes: [ep],
+    totalCount: 1,
+    seasonTotal: 1,
+  };
+  switchTab('home');
+  enterCollection(col, 0, 'feed', [ep]);
 }
 
 // ---------- 底部 首页 / 我的 ----------

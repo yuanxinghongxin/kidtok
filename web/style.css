@@ -2237,33 +2237,80 @@ body {
   background: rgba(0, 0, 0, 0.5);
 }
 
-/* ============ 观看历史 / 喜欢：3 列正方形封面网格 ============ */
+/* ============ 观看历史 / 喜欢：B 站风格单列列表 ============ */
 
-.me-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  padding: 14px 18px 0;
+.me-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 18px 0;
+  background: #000;
 }
 
-.me-grid[hidden] {
+.me-list[hidden] {
   display: none;
 }
 
-/* 只有封面：正方形裁切、小圆角，失败/缺图时留一个深色底块 */
-.me-tile {
-  position: relative;
-  aspect-ratio: 1 / 1;
-  overflow: hidden;
+/* 一行一条：左 140x80 横图 + 右侧分类/标题，整行可点 */
+.me-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.me-row:active {
+  opacity: 0.65;
+}
+
+.me-row-thumb {
+  flex: 0 0 auto;
+  display: block;
+  width: 140px;
+  height: 80px;
+  object-fit: cover;
   background: #1a1a20;
   border-radius: 8px;
 }
 
-.me-tile img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.me-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* 分类标签：小字号、浅灰 */
+.me-row-cat {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 标题最多两行，超出省略号 */
+.me-row-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 0;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 /* 空状态：居中的空盒子图标 + 一行灰字 */
